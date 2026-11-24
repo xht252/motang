@@ -1,0 +1,28 @@
+# 构建产物
+.gradle/
+build/
+**/build/
+.kotlin/
+
+# 本地环境（不入库）
+local.properties
+keystore.properties
+*.jks
+*.keystore
+
+# Rust
+core-rs/target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Kilo / Agent Manager
+.kilo/worktrees/
+.kilo/agent-manager.json
+
+# 日志
+*.log

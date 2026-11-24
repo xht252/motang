@@ -1,0 +1,7 @@
+# 16KB page size 对齐：面向未来 16KB 内核机型的低成本保险。
+# 即使不再上架 Google Play，这一行成本为零，保留。
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 宣纸底，与 Compose 侧 theme/Theme.kt 的 XuanPaper 保持一致。 -->
+    <color name="xuan_paper">#F5F0E6</color>
+</resources>

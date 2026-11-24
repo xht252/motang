@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      自适应硬规则（见 .kilo/rules/project.md）：
+      - resizeableActivity=true
+      - 不锁 screenOrientation
+      - 不拦截 screenSize / smallestScreenSize / screenLayout / density
+    -->
+    <application
+        android:name=".MotangApplication"
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:resizeableActivity="true"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Motang">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

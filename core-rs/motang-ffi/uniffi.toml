@@ -1,0 +1,12 @@
+# uniffi Kotlin 绑定生成配置。
+# 键名对应 uniffi_bindgen::bindings::kotlin::gen_kotlin::Config。
+[bindings.kotlin]
+# 生成到 app 的 Kotlin 包名，避免默认的 uniffi.motang_ffi 污染顶层命名空间。
+package_name = "io.github.xht252.motang.core"
+# 运行期加载的 .so 名（libmotang_ffi.so 去掉 lib 前缀与 .so 后缀）。
+cdylib_name = "motang_ffi"
+# 启用 Android Cleaner（API 33+ 用 SystemCleaner，以下用后台线程 + PhantomReference）。
+# minSdk 26 场景必须开启，否则 Cleaner 走 JVM 特化实现。
+android = true
+# 让生成的 enum 使用 Kotlin enum entries（Kotlin 1.9+）。
+kotlin_target_version = "2.2"

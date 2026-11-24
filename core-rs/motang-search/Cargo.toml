@@ -1,0 +1,9 @@
+[package]
+name = "motang-search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "墨唐检索核心（tantivy + jieba + 拼音）—— M1 填充实现"
+
+[dependencies]

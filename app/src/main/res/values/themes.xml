@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      仅作为 Compose 宿主主题的最小载体；真实配色在 ui/theme/Theme.kt。
+      使用 NoActionBar：边到边由 enableEdgeToEdge() 负责。
+    -->
+    <style name="Theme.Motang" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/xuan_paper</item>
+    </style>
+</resources>

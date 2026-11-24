@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = ["motang-etl", "motang-search", "motang-ffi"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+
+[workspace.dependencies]
+motang-search = { path = "motang-search" }
+uniffi = "=0.32.2"
+thiserror = "2"
+
+# 说明：release 统一 panic = "unwind"。
+# 理由：uniffi 需要 unwind 才能把 Rust panic 转成 Kotlin 异常；而 Cargo 的
+# profile 覆盖（[profile.release.package.*]）明确不支持 panic 字段
+# （Cargo Book: "Overrides cannot specify the panic, lto, or rpath settings."），
+# 因此无法「ffi 用 unwind / bin 用 abort」分开设置。
+# 见 .kilo/memory/DECISIONS.md 第 3 条。
+#
+# strip 用 "debuginfo" 而非 true：两者减体积相近，但 "symbols" 会连 .symtab
+# 一起去掉，而 uniffi 的 `--library` 提取元数据依赖静态符号表。保留 symtab
+# 使得「从 release .so 也能重新生成绑定」这条兜底路径仍然可用。
+# 见 .kilo/memory/DECISIONS.md 第 11 条。
+[profile.release]
+opt-level = 3
+lto = "fat"
+panic = "unwind"
+strip = "debuginfo"
+codegen-units = 1

@@ -1,0 +1,58 @@
+# 墨唐 motang · 版本目录（唯一版本来源）
+#
+# 约定：别名一律用 camelCase（Gradle 文档「避免子组访问器」的建议）。
+# 若用 kebab-case，`compose-ui` 与 `compose-ui-graphics` 会同时占用
+# `libs.compose.ui` 这个访问器前缀，导致访问器冲突。
+#
+# compileSdk 约束：M0 锁定 compileSdk/targetSdk = 35（本机仅有 platform-35）。
+# 下列版本均为「compileSdk 35 可满足」的组合；升 36 时按
+# .kilo/memory/DECISIONS.md 第 2 条整体上调。
+
+[versions]
+agp = "8.13.2"
+kotlin = "2.2.20"
+ksp = "2.2.20-2.0.4"
+
+composeBom = "2025.06.01"
+material3Adaptive = "1.1.0"
+androidxWindow = "1.3.0"
+activityCompose = "1.10.1"
+coreKtx = "1.15.0"
+lifecycle = "2.8.7"
+navigationCompose = "2.8.9"
+room = "2.7.2"
+datastore = "1.1.7"
+jna = "5.19.1"
+
+[libraries]
+composeBom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+composeUi = { module = "androidx.compose.ui:ui" }
+composeUiGraphics = { module = "androidx.compose.ui:ui-graphics" }
+composeUiTooling = { module = "androidx.compose.ui:ui-tooling" }
+composeUiToolingPreview = { module = "androidx.compose.ui:ui-tooling-preview" }
+composeMaterial3 = { module = "androidx.compose.material3:material3" }
+
+material3Adaptive = { module = "androidx.compose.material3.adaptive:adaptive", version.ref = "material3Adaptive" }
+material3AdaptiveLayout = { module = "androidx.compose.material3.adaptive:adaptive-layout", version.ref = "material3Adaptive" }
+material3AdaptiveNavigation = { module = "androidx.compose.material3.adaptive:adaptive-navigation", version.ref = "material3Adaptive" }
+androidxWindow = { module = "androidx.window:window", version.ref = "androidxWindow" }
+
+androidxActivityCompose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidxCoreKtx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+androidxLifecycleRuntimeKtx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidxLifecycleViewmodelCompose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidxNavigationCompose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
+
+androidxRoomRuntime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidxRoomKtx = { module = "androidx.room:room-ktx", version.ref = "room" }
+androidxRoomCompiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+androidxDatastorePreferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+
+# JNA 需用 @aar 变体（含 Android native），见 app/build.gradle.kts 说明。
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+
+[plugins]
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlinCompose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
