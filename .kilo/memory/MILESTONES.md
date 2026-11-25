@@ -342,3 +342,20 @@ fn list_authors(meta_dir: String, prefix: String, limit: u32) -> Result<Vec<Stri
 - 语音输入 UI（mtmd 已验证可用，未接前端）
 - 热约束、`:llm` 崩溃自动重试
 - 模型重复加载（每次点击都会 load，应缓存句柄）
+### M5 第 4 步（流式 + 句柄复用，2026-11-25）
+
+**已实现**
+- **流式输出**：`generateStream(prompt, maxTokens, temp, sink)`，JNI 逐 token 回调
+  `TokenSink.onToken`，经 Messenger `MSG_TOKEN` 送到主线程，UI 追加显示。
+- **思考段流式过滤**：`ThinkFilter` 状态机——遇到 `</think>` 前不发送任何内容，
+  之后立即转发；模型未思考时结束时一次性 flush。避免「首字延迟 = 总时长」。
+- **模型句柄复用**：`loadModel` 发现路径相同直接返回，省去约 10 s 重载。
+
+**实测**
+- 生成完成日志：`generated 230 chars in 30692 ms`（模拟器 x86_64，约 7.5 tok/s）。
+- `:llm` 进程内模型加载 + 生成链路正常。
+
+**未完成**
+- Room 解释缓存（`sha256(poem_id+prompt_ver+model_id)`）
+- 语音输入 UI（mtmd 已可用）
+- 热约束 / `:llm` 崩溃重试

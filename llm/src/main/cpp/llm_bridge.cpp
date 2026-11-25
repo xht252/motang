@@ -19,6 +19,7 @@ std::mutex g_mutex;
 llama_model* g_model = nullptr;
 llama_context* g_ctx = nullptr;
 const llama_vocab* g_vocab = nullptr;
+std::string g_loaded_path;
 int g_n_ctx = 2048;
 
 std::string jstring_to_std(JNIEnv* env, jstring value) {
@@ -40,7 +41,62 @@ void release_locked() {
         g_model = nullptr;
     }
     g_vocab = nullptr;
+    g_loaded_path.clear();
 }
+
+/** 构造采样器。温度 <= 0.01 走贪心。 */
+llama_sampler* make_sampler(float temperature) {
+    llama_sampler_chain_params params = llama_sampler_chain_default_params();
+    llama_sampler* smpl = llama_sampler_chain_init(params);
+    if (temperature <= 0.01f) {
+        llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
+    } else {
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.9f, 1));
+        llama_sampler_chain_add(smpl, llama_sampler_init_temp(temperature));
+        llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+    }
+    return smpl;
+}
+
+/**
+ * 思考段过滤状态机。
+ *
+ * 流式场景下不能等整段结束再过滤，否则「首字延迟」等于总时长。
+ * 因此维护一个 pending 缓冲：在遇到 `</think>` 之前不向 UI 发送任何内容；
+ * 遇到后立刻把后缀发出，此后每个 token 直接发。
+ * 若全程没有 `</think>`（模型未思考），结束时一次性 flush。
+ */
+struct ThinkFilter {
+    bool passed = false;
+    std::string pending;
+
+    /** 返回本次应发送给 UI 的增量（可能为空）。 */
+    std::string push(const std::string& piece) {
+        if (passed) return piece;
+        pending += piece;
+        const std::string marker = "</think>";
+        const size_t pos = pending.find(marker);
+        if (pos == std::string::npos) {
+            return {};
+        }
+        passed = true;
+        std::string rest = pending.substr(pos + marker.size());
+        pending.clear();
+        const size_t first = rest.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) return {};
+        return rest.substr(first);
+    }
+
+    std::string flush() {
+        if (passed) return {};
+        passed = true;
+        std::string out;
+        out.swap(pending);
+        const size_t first = out.find_first_not_of(" \t\r\n");
+        return first == std::string::npos ? std::string() : out.substr(first);
+    }
+};
 
 }  // namespace
 
@@ -60,19 +116,19 @@ Java_io_github_xht252_motang_llm_LlmNative_echoModelPath(
     return env->NewStringUTF(path.c_str());
 }
 
-/**
- * 加载模型。返回空串表示成功，否则返回错误信息。
- *
- * n_gpu_layers = 0：端侧统一走 CPU（KleidiAI 内核），避免 GPU 后端差异。
- */
+/** 加载模型；同一路径重复调用直接返回（句柄复用，省 ~10s）。 */
 JNIEXPORT jstring JNICALL
 Java_io_github_xht252_motang_llm_LlmNative_loadModel(
     JNIEnv* env, jobject /*thiz*/, jstring model_path, jint n_threads, jint n_ctx) {
     const std::string path = jstring_to_std(env, model_path);
 
     std::lock_guard<std::mutex> lock(g_mutex);
-    release_locked();
+    if (g_ctx != nullptr && g_loaded_path == path) {
+        LOGI("model already loaded, reuse: %s", path.c_str());
+        return env->NewStringUTF("");
+    }
 
+    release_locked();
     llama_backend_init();
 
     llama_model_params mparams = llama_model_default_params();
@@ -98,6 +154,7 @@ Java_io_github_xht252_motang_llm_LlmNative_loadModel(
 
     g_vocab = llama_model_get_vocab(g_model);
     g_n_ctx = static_cast<int>(cparams.n_ctx);
+    g_loaded_path = path;
 
     LOGI("model loaded: %s (n_ctx=%d, threads=%u)", path.c_str(), g_n_ctx, cparams.n_threads);
     return env->NewStringUTF("");
@@ -110,106 +167,119 @@ Java_io_github_xht252_motang_llm_LlmNative_releaseModel(JNIEnv* /*env*/, jobject
 }
 
 /**
- * 生成。
+ * 流式生成。
  *
- * 关闭 thinking 的方式：**输出侧过滤**。
- * 若输出出现 `</think>`，丢弃它之前的内容只保留其后的答案；
- * 同时把 `</think>` 之后的文本才算正文。这样不依赖各模型私有的
- * chat template 开关（MiniCPM5/Qwen3 表达方式不同）。
+ * 每个「已通过思考过滤」的增量都回调 `sink.onToken(String)`，
+ * 返回值是最终完整答案（便于调用方缓存）。
  */
 JNIEXPORT jstring JNICALL
-Java_io_github_xht252_motang_llm_LlmNative_generate(
-    JNIEnv* env, jobject /*thiz*/, jstring prompt, jint max_tokens, jfloat temperature) {
+Java_io_github_xht252_motang_llm_LlmNative_generateStream(
+    JNIEnv* env, jobject /*thiz*/, jstring prompt, jint max_tokens, jfloat temperature,
+    jobject sink) {
     std::lock_guard<std::mutex> lock(g_mutex);
-
     if (g_ctx == nullptr || g_model == nullptr || g_vocab == nullptr) {
+        return env->NewStringUTF("");
+    }
+
+    jclass sink_cls = env->GetObjectClass(sink);
+    jmethodID on_token = env->GetMethodID(sink_cls, "onToken", "(Ljava/lang/String;)V");
+    if (on_token == nullptr) {
+        LOGE("TokenSink.onToken 未找到");
         return env->NewStringUTF("");
     }
 
     const std::string text = jstring_to_std(env, prompt);
 
-    // 1) tokenize（清空 KV：每次生成独立，先做最简单的正确版本）
     llama_memory_clear(llama_get_memory(g_ctx), true);
 
     std::vector<llama_token> tokens(text.size() + 8);
     int n = llama_tokenize(
         g_vocab, text.c_str(), static_cast<int32_t>(text.size()),
         tokens.data(), static_cast<int32_t>(tokens.size()),
-        /*add_special=*/true, /*parse_special=*/true);
+        true, true);
     if (n < 0) {
-        tokens.resize(-n);
+        tokens.resize(static_cast<size_t>(-n));
         n = llama_tokenize(
             g_vocab, text.c_str(), static_cast<int32_t>(text.size()),
             tokens.data(), static_cast<int32_t>(tokens.size()),
             true, true);
     }
-    if (n <= 0) {
-        return env->NewStringUTF("");
-    }
-    tokens.resize(n);
+    if (n <= 0) return env->NewStringUTF("");
+    tokens.resize(static_cast<size_t>(n));
 
-    // 2) prompt 解码
     llama_batch batch = llama_batch_get_one(tokens.data(), static_cast<int32_t>(tokens.size()));
-    if (llama_decode(g_ctx, batch) != 0) {
-        return env->NewStringUTF("");
-    }
+    if (llama_decode(g_ctx, batch) != 0) return env->NewStringUTF("");
 
-    // 3) 采样链：低温、确定性强
-    llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
-    llama_sampler* smpl = llama_sampler_chain_init(sparams);
-    if (temperature <= 0.01f) {
-        llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
-    } else {
-        llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
-        llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.9f, 1));
-        llama_sampler_chain_add(smpl, llama_sampler_init_temp(temperature));
-        llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
-    }
-
-    // 4) 逐 token 生成
-    std::string raw;
+    llama_sampler* smpl = make_sampler(temperature);
+    ThinkFilter filter;
+    std::string answer;
     const int limit = max_tokens > 0 ? max_tokens : 256;
     std::vector<char> piece(64);
 
     for (int i = 0; i < limit; ++i) {
         const llama_token id = llama_sampler_sample(smpl, g_ctx, -1);
-        if (llama_vocab_is_eog(g_vocab, id)) {
-            break;
-        }
+        if (llama_vocab_is_eog(g_vocab, id)) break;
         llama_sampler_accept(smpl, id);
 
         int piece_len = llama_token_to_piece(
-            g_vocab, id, piece.data(), static_cast<int32_t>(piece.size()), 0, /*special=*/false);
+            g_vocab, id, piece.data(), static_cast<int32_t>(piece.size()), 0, false);
         if (piece_len < 0) {
-            piece.resize(-piece_len);
+            piece.resize(static_cast<size_t>(-piece_len));
             piece_len = llama_token_to_piece(
                 g_vocab, id, piece.data(), static_cast<int32_t>(piece.size()), 0, false);
         }
+
         if (piece_len > 0) {
-            raw.append(piece.data(), static_cast<size_t>(piece_len));
+            const std::string delta = filter.push(std::string(piece.data(), static_cast<size_t>(piece_len)));
+            if (!delta.empty()) {
+                answer += delta;
+                jstring jdelta = env->NewStringUTF(delta.c_str());
+                env->CallVoidMethod(sink, on_token, jdelta);
+                env->DeleteLocalRef(jdelta);
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                    break;
+                }
+            }
         }
 
         llama_batch next = llama_batch_get_one(const_cast<llama_token*>(&id), 1);
-        if (llama_decode(g_ctx, next) != 0) {
-            break;
-        }
+        if (llama_decode(g_ctx, next) != 0) break;
     }
 
     llama_sampler_free(smpl);
 
-    // 5) 过滤思考段：只保留 </think> 之后的内容
-    const std::string marker = "</think>";
-    const size_t pos = raw.find(marker);
-    std::string answer = (pos == std::string::npos) ? raw : raw.substr(pos + marker.size());
-    // 去掉开头空白
-    const size_t first = answer.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) {
-        answer.clear();
-    } else if (first > 0) {
-        answer.erase(0, first);
+    // 模型未输出思考段时，一次性 flush
+    const std::string tail = filter.flush();
+    if (!tail.empty()) {
+        answer += tail;
+        jstring jtail = env->NewStringUTF(tail.c_str());
+        env->CallVoidMethod(sink, on_token, jtail);
+        env->DeleteLocalRef(jtail);
+        if (env->ExceptionCheck()) env->ExceptionClear();
     }
 
+    env->DeleteLocalRef(sink_cls);
     return env->NewStringUTF(answer.c_str());
+}
+
+/** 非流式生成（保留：缓存填充、批处理场景）。 */
+JNIEXPORT jstring JNICALL
+Java_io_github_xht252_motang_llm_LlmNative_generate(
+    JNIEnv* env, jobject /*thiz*/, jstring prompt, jint max_tokens, jfloat temperature) {
+    // 复用流式实现，传入一个丢弃增量的 sink
+    jclass sink_cls = env->FindClass("io/github/xht252/motang/llm/LlmNative$NoopSink");
+    if (sink_cls == nullptr) {
+        env->ExceptionClear();
+        return env->NewStringUTF("");
+    }
+    jmethodID ctor = env->GetMethodID(sink_cls, "<init>", "()V");
+    jobject sink = env->NewObject(sink_cls, ctor);
+    jstring result = Java_io_github_xht252_motang_llm_LlmNative_generateStream(
+        env, nullptr, prompt, max_tokens, temperature, sink);
+    if (sink != nullptr) env->DeleteLocalRef(sink);
+    env->DeleteLocalRef(sink_cls);
+    return result;
 }
 
 }  // extern "C"

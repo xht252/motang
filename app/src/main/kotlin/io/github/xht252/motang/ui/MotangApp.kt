@@ -247,11 +247,14 @@ fun MotangApp(initialQuery: String? = null) {
                             "模型加载失败：$error"
                         } else {
                             runCatching {
-                                llmClient.generate(
-                                    buildPoemPrompt(sel.title, sel.author, sel.paragraphs),
+                                llmClient.generateStream(
+                                    prompt = buildPoemPrompt(sel.title, sel.author, sel.paragraphs),
                                     maxTokens = 192,
                                     temperature = 0.3f,
-                                )
+                                ) { delta ->
+                                    // 流式追加：首个 token 即可见，避免 25s 空白。
+                                    aiText += delta
+                                }
                             }.getOrElse { "生成失败：${it.message}" }
                         }
                         aiBusy = false

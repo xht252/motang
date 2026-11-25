@@ -24,7 +24,13 @@ class LlmClient(private val context: Context) {
     private var service: Messenger? = null
     private var bound = false
 
+    /** 流式增量回调（每次 generateStream 前设置）。 */
+    private var tokenSink: ((String) -> Unit)? = null
+
     private val replyHandler = Handler(Looper.getMainLooper()) { msg ->
+        if (msg.what == LlmProtocol.MSG_TOKEN) {
+            tokenSink?.invoke(msg.data?.getString(LlmProtocol.KEY_TEXT).orEmpty())
+        }
         if (msg.what == LlmProtocol.MSG_RESULT) {
             pending?.let { cont ->
                 pending = null
@@ -76,6 +82,27 @@ class LlmClient(private val context: Context) {
             data.putInt(LlmProtocol.KEY_MAX_TOKENS, maxTokens)
             data.putFloat(LlmProtocol.KEY_TEMPERATURE, temperature)
         }
+
+    /**
+     * 流式生成。
+     *
+     * [onToken] 在**主线程**回调（来自 replyHandler），可直接更新 Compose 状态。
+     *
+     * @return 完整答案（用于写缓存）。
+     */
+    suspend fun generateStream(
+        prompt: String,
+        maxTokens: Int = 256,
+        temperature: Float = 0.3f,
+        onToken: (String) -> Unit,
+    ): String {
+        tokenSink = onToken
+        return try {
+            generate(prompt, maxTokens, temperature)
+        } finally {
+            tokenSink = null
+        }
+    }
 
     fun release() {
         runCatching {

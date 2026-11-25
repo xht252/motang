@@ -51,7 +51,11 @@ class LlmService : Service() {
                 val reply = msg.replyTo
                 worker.execute {
                     val started = System.currentTimeMillis()
-                    val text = runCatching { LlmNative.generate(prompt, maxTokens, temperature) }
+                    val text = runCatching {
+                        LlmNative.generateStream(prompt, maxTokens, temperature) { delta ->
+                            reply?.send(tokenMessage(delta))
+                        }
+                    }
                         .getOrElse {
                             Log.e(TAG, "generate failed", it)
                             ""
@@ -81,6 +85,10 @@ class LlmService : Service() {
         super.onDestroy()
     }
 
+    private fun tokenMessage(text: String): Message =
+        Message.obtain(null, LlmProtocol.MSG_TOKEN).apply {
+            data = Bundle().apply { putString(LlmProtocol.KEY_TEXT, text) }
+        }
     private fun replyMessage(data: Bundle): Message =
         Message.obtain(null, LlmProtocol.MSG_RESULT).apply { this.data = data }
 

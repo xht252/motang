@@ -1,12 +1,14 @@
 package io.github.xht252.motang.llm
 
+/** 流式增量回调。 */
+fun interface TokenSink {
+    fun onToken(text: String)
+}
+
 /**
  * llama.cpp 的 JNI 入口。
  *
- * 只做「薄封装」：参数与返回值保持简单（String / 基础类型），
- * 复杂对象在 Kotlin 侧组装，避免跨边界逐条传对象。
- *
- * 该库由 `:llm` 模块的 CMake 构建产出（libmotang_llm.so），
+ * 只做「薄封装」：参数与返回值保持简单，复杂对象在 Kotlin 侧组装。
  * 推理运行在 `android:process=":llm"` 独立进程。
  */
 object LlmNative {
@@ -15,28 +17,36 @@ object LlmNative {
         System.loadLibrary("motang_llm")
     }
 
-    /** 探针：验证 so 能加载、能链接到 llama.cpp。 */
+    /** 供 native 侧 `generate` 复用的空 sink（JNI 按名字查找）。 */
+    class NoopSink : TokenSink {
+        override fun onToken(text: String) = Unit
+    }
+
     external fun probe(): String
 
-    /** 回显模型路径（JNI 字符串往返自检）。 */
     external fun echoModelPath(modelPath: String): String
 
     /**
-     * 加载模型。
+     * 加载模型。同一路径重复调用会直接复用（省 ~10s）。
      *
-     * @return 空串表示成功；非空为错误信息。
+     * @return 空串表示成功。
      */
     external fun loadModel(modelPath: String, nThreads: Int, nCtx: Int): String
 
-    /** 释放模型与上下文。 */
     external fun releaseModel()
 
     /**
-     * 生成一次完整回答（非流式）。
+     * 流式生成：每个通过思考过滤的增量回调 [sink]。
      *
-     * 思考段在 native 侧按 `</think>` 过滤，返回的只会是最终答案。
-     *
-     * @param temperature <= 0.01 时走贪心解码（确定性强）。
+     * @return 最终完整答案（用于写缓存）。
      */
+    external fun generateStream(
+        prompt: String,
+        maxTokens: Int,
+        temperature: Float,
+        sink: TokenSink,
+    ): String
+
+    /** 非流式（内部复用 generateStream）。 */
     external fun generate(prompt: String, maxTokens: Int, temperature: Float): String
 }

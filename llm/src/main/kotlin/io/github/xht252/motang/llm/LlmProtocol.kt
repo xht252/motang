@@ -5,6 +5,7 @@ object LlmProtocol {
     const val MSG_LOAD = 1
     const val MSG_GENERATE = 2
     const val MSG_RELEASE = 3
+    const val MSG_TOKEN = 101
     const val MSG_RESULT = 100
 
     const val KEY_TEXT = "text"
