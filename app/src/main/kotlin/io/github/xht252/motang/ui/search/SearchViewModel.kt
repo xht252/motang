@@ -31,9 +31,12 @@ data class SearchUiState(
     val loading: Boolean = false,
     val error: String? = null,
     val selected: PoemDetail? = null,
+    /** 本次结果是否包含正文扫描匹配。 */
+    val fromBodyScan: Boolean = false,
 )
 
 data class PoemDetail(
+    val poemId: String,
     val title: String,
     val author: String,
     val paragraphs: List<String>,
@@ -112,6 +115,7 @@ class SearchViewModel(private val repository: SearchRepository) : ViewModel() {
                             loading = false,
                             hits = page.hits.map { hit -> hit.toUi() },
                             total = page.total.toInt(),
+                            fromBodyScan = page.fromBodyScan,
                         )
                     }
                     Log.i(
@@ -135,6 +139,7 @@ class SearchViewModel(private val repository: SearchRepository) : ViewModel() {
                     _state.update {
                         it.copy(
                             selected = PoemDetail(
+                                poemId = poem.id,
                                 title = poem.title,
                                 author = poem.author,
                                 paragraphs = poem.paragraphs,

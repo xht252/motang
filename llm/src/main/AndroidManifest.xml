@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      推理服务跑在独立进程 :llm：
+      1) 模型常驻 ~1.6GB，与 UI 同进程会导致任何 OOM 连带杀死界面；
+      2) 进程被杀时主进程只收到 binder 死亡，可提示重试。
+    -->
+    <application>
+        <service
+            android:name=".LlmService"
+            android:exported="false"
+            android:process=":llm" />
+    </application>
+
+</manifest>

@@ -3,32 +3,90 @@
 build/
 **/build/
 .kotlin/
+.cxx/
+.externalNativeBuild/
+captures/
+*.hprof
+
+# Android 打包产物
+*.apk
+*.aab
+*.ap_
+*.zip
+native-debug-symbols.zip
+output-metadata.json
 
 # 本地环境（不入库）
 local.properties
 keystore.properties
 *.jks
 *.keystore
+*.p12
+*.pem
 
 # Rust
 core-rs/target/
+**/*.rlib
 
-# IDE
+# 原生与二进制
+*.so
+*.dylib
+*.dll
+*.a
+*.o
+*.obj
+*.pdb
+*.zst
+
+# IDE / 编辑器
 .idea/
 *.iml
 .vscode/
+.history/
 .DS_Store
 Thumbs.db
+
+# 日志与临时文件
+*.log
+*.tmp
+*.bak
+
+# Node（Skill CLI 可能产生）
+node_modules/
+npm-debug.log*
 
 # Kilo / Agent Manager
 .kilo/worktrees/
 .kilo/agent-manager.json
 
-# 日志
-*.log
-
-# 语料原始数据（由 fetch-corpus.ps1 下载，不入库）
+# ---------------------------------------------------------------------------
+# 大体积语料：源数据与派生产物都不入库
+# ---------------------------------------------------------------------------
+# 源数据 228 MB（data/Poetry，MIT，Copyright 2018 Werner）。
+# 出处与许可见 docs/DATA-SOURCES.md。
 data/
 
-# ETL 产物（M1 生成后入 assets）
+# ETL 中间产物
 core-rs/out/
+
+# 语料派生产物 111 MB：由 Gradle 任务 generateCorpusAssets 从 data/Poetry 生成。
+app/src/main/assets/poems.jsonl.zst
+app/src/main/assets/poems.authors.json
+
+# 模型文件（M5 端侧 LLM，不入库）
+*.gguf
+*.bin
+models/
+app/src/main/assets/models/
+
+# 字体文件（霞鹜文楷完整版 ~19MB，按需本地放置；见 docs/DATA-SOURCES.md）
+**/*.ttf
+**/*.otf
+# 端侧模型（M5）：2.2 GB，绝不可入库
+# MiniCPM5-2B-Q4_K_M.gguf（文本解析）+ Qwen3-ASR-0.6B-Q8_0.gguf（语音转写）
+model/
+# llama.cpp host 构建产物
+llm/build-host/
+# Python 缓存（ui-ux-pro-max skill 脚本）
+__pycache__/
+*.pyc

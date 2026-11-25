@@ -49,6 +49,9 @@
   保留 `canScheduleExactAlarms` 防御性检查与 WorkManager 降级链。
 - 16KB 对齐：保留链接参数；M0 作为硬门槛校验，M6 起降为警告项。
 - ABI：release 仅 `arm64-v8a`；`x86_64` 仅供 debug/模拟器。
+- **APK 体积**：语料全量内置（853,349 首），release APK 约 129 MB。
+  原「≤ 40 MB」指标由 `.kilo/memory/DECISIONS.md` 第 20 条正式废止，
+  体积上限改按「语料 + 代码 + 字体」实测登记，不再设固定值。
 
 ## 内容与合规
 - LLM 输出固定标注"AI 生成，仅供参考"；预置人工注释**若存在**则优先于生成结果。

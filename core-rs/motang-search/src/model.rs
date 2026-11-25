@@ -1,40 +1,32 @@
 //! 语料数据模型。
 //!
-//! 这份类型同时被 `motang-etl`（写）与 `motang-search`（读）使用，
-//! 放在 search crate 里避免两边定义漂移。
+//! 数据源：`data/Poetry` 下全部 CSV（MIT，Copyright 2018 Werner），
+//! 字段为 `题目 / 朝代 / 作者 / 内容`，**本身即简体**。
 //!
-//! 体积约束：assets 里**只存不可推导的字段**。
+//! 因此不再需要「繁简双字段」：
 //!
+//! - 原文即简体，直接作为展示文本与检索文本
+//! - 去掉 `*_simplified` 冗余字段后，assets 体积近乎减半
+//!   （见 .kilo/memory/DECISIONS.md 第 20 条）
+//!
+//! 派生字段不落盘（建索引时计算）：
 //! - `pinyin_initials` 由 `pinyin_full` 各音节首字母派生
 //! - `pinyin_compact`  由 `pinyin_full` 去空格派生
-//!
-//! 两者都在建索引时计算，不落盘——实测可显著压小 assets。
-//!
-//! 注意 `notes` / `translation` / `appreciation` 在 M1 恒为 `None`：
-//! 上游 `chinese-poetry` 的唐诗三百首**不含**注释译文（见 DECISIONS 第 4 条）。
 
 use serde::{Deserialize, Serialize};
 
 /// 一首诗的完整记录。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Poem {
-    /// 稳定 ID。优先沿用上游 `id`；三百首无 id 时用内容哈希。
+    /// 稳定 ID。由「作者+标题+正文」哈希派生，保证同一首诗跨构建不变。
     pub id: String,
     pub title: String,
-    /// 标题简体，用于简体输入命中繁体语料。
-    #[serde(default)]
-    pub title_simplified: String,
     pub author: String,
-    /// 作者简体。
-    #[serde(default)]
-    pub author_simplified: String,
-    /// 朝代。当前语料全部为「唐」。
+    /// 朝代。唐诗语料全部为「唐」。
     pub dynasty: String,
-    /// 原文（繁体，保留上游原貌）。
+    /// 正文，按句号切分为段（一段通常对应律诗的一联）。
     pub paragraphs: Vec<String>,
-    /// 简体对照，逐段对应 `paragraphs`。
-    pub paragraphs_simplified: Vec<String>,
-    /// 逐段拼音全拼，音节以空格分隔，例："chuang qian kan yue guang"。
+    /// 逐段拼音全拼，音节以空格分隔，例："chuang qian ming yue guang"。
     /// 首字母与紧凑形式均由此派生，不再单独落盘。
     pub pinyin_full: Vec<String>,
     /// 标题拼音全拼，例："jing ye si"。
@@ -43,16 +35,16 @@ pub struct Poem {
     /// 作者拼音全拼，例："li bai"。
     #[serde(default)]
     pub author_pinyin_full: String,
-    /// 上游 tags（三百首可能提供）。M1 全唐诗分片无此字段。
+    /// 预留标签位。当前数据源不提供。
     #[serde(default)]
     pub tags: Vec<String>,
-    /// 预置注释。M1 恒为 None。
+    /// 预置注释。数据源不含，恒为 None。
     #[serde(default)]
     pub notes: Option<String>,
-    /// 预置译文。M1 恒为 None。
+    /// 预置译文。数据源不含，恒为 None。
     #[serde(default)]
     pub translation: Option<String>,
-    /// 预置赏析。M1 恒为 None。
+    /// 预置赏析。数据源不含，恒为 None。
     #[serde(default)]
     pub appreciation: Option<String>,
     /// 数据出处标识，用于合规声明。
@@ -65,7 +57,7 @@ impl Poem {
         self.pinyin_full.join(" ")
     }
 
-    /// 逐段拼音首字母，例："cqkyg"。
+    /// 逐段拼音首字母，例："cqmyg"。
     pub fn paragraph_initials(&self) -> Vec<String> {
         self.pinyin_full.iter().map(|p| initials_of(p)).collect()
     }
@@ -92,7 +84,7 @@ pub struct SearchHit {
     pub poem_id: String,
     pub title: String,
     pub author: String,
-    /// 带高亮的片段（M1 为纯文本片段，M2 交给 Compose 渲染）。
+    /// 高亮片段（M1 为纯文本片段，M2 交给 Compose 渲染）。
     pub snippet: String,
     pub score: f32,
 }
@@ -134,14 +126,11 @@ mod tests {
     fn sample() -> Poem {
         Poem {
             id: "1".into(),
-            title: "靜夜思".into(),
-            title_simplified: "静夜思".into(),
+            title: "静夜思".into(),
             author: "李白".into(),
-            author_simplified: "李白".into(),
             dynasty: "唐".into(),
-            paragraphs: vec!["床前看月光".into()],
-            paragraphs_simplified: vec!["床前看月光".into()],
-            pinyin_full: vec!["chuang qian kan yue guang".into()],
+            paragraphs: vec!["床前明月光，疑是地上霜。".into()],
+            pinyin_full: vec!["chuang qian ming yue guang yi shi di shang shuang".into()],
             title_pinyin_full: "jing ye si".into(),
             author_pinyin_full: "li bai".into(),
             tags: vec![],
@@ -157,13 +146,20 @@ mod tests {
         let p = sample();
         assert_eq!(p.title_initials(), "jys");
         assert_eq!(p.author_initials(), "lb");
-        assert_eq!(p.paragraph_initials(), vec!["cqkyg".to_string()]);
+        assert_eq!(
+            p.paragraph_initials(),
+            vec!["cqmygysdss".to_string()],
+            "首字母应覆盖整段所有音节"
+        );
     }
 
     #[test]
     fn compact_pinyin_joins_title_and_body() {
         let p = sample();
-        assert_eq!(p.compact_pinyin(), "jingyesichuangqiankanyueguang");
+        assert_eq!(
+            p.compact_pinyin(),
+            "jingyesichuangqianmingyueguangyishidishangshuang"
+        );
     }
 
     #[test]

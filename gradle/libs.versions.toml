@@ -23,6 +23,9 @@ navigationCompose = "2.8.9"
 room = "2.7.2"
 datastore = "1.1.7"
 jna = "5.19.1"
+work = "2.10.5"
+junit = "4.13.2"
+coroutines = "1.10.2"
 
 [libraries]
 composeBom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
@@ -35,6 +38,7 @@ composeMaterial3 = { module = "androidx.compose.material3:material3" }
 material3Adaptive = { module = "androidx.compose.material3.adaptive:adaptive", version.ref = "material3Adaptive" }
 material3AdaptiveLayout = { module = "androidx.compose.material3.adaptive:adaptive-layout", version.ref = "material3Adaptive" }
 material3AdaptiveNavigation = { module = "androidx.compose.material3.adaptive:adaptive-navigation", version.ref = "material3Adaptive" }
+material3AdaptiveNavSuite = { module = "androidx.compose.material3:material3-adaptive-navigation-suite" }
 androidxWindow = { module = "androidx.window:window", version.ref = "androidxWindow" }
 
 androidxActivityCompose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
@@ -47,12 +51,16 @@ androidxRoomRuntime = { module = "androidx.room:room-runtime", version.ref = "ro
 androidxRoomKtx = { module = "androidx.room:room-ktx", version.ref = "room" }
 androidxRoomCompiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 androidxDatastorePreferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+androidxWorkRuntime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+junit = { module = "junit:junit", version.ref = "junit" }
+kotlinxCoroutinesAndroid = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 
 # JNA 需用 @aar 变体（含 Android native），见 app/build.gradle.kts 说明。
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
+androidLibrary = { id = "com.android.library", version.ref = "agp" }
 kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlinCompose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

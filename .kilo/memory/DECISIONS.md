@@ -248,3 +248,95 @@ M2 可考虑加同义/异文提示，M5 可让 LLM 说明异文。当前不特�
 **理由**：APK 内 assets 默认压缩，`AssetManager.openFd()` 会抛
 `FileNotFoundException: probably compressed`（设备实测崩溃）。
 标记文件既能避免每次启动重拷 15 MB，又不依赖 asset 的随机访问能力。
+---
+
+## 20. 语料改为全量 `data/Poetry`（简体），废止「APK ≤ 40 MB」
+
+**决策**：数据源从 `chinese-poetry`（繁体）换成用户提供的 `data/Poetry`
+（MIT，Copyright 2018 Werner，简体），并**全量内置 853,349 首**，不联网下载。
+
+**理由**：用户明确要求「这个文件夹的所有诗歌」，且不要繁体。
+
+**代价（实测）**：
+| 项 | 数值 |
+|---|---|
+| 语料产物 `poems.jsonl.zst` | 111.51 MB |
+| release APK | **129.02 MB**（原规则 40 MB） |
+| 作者数 | 28,424 |
+
+**因此**：`.kilo/rules/project.md` 的「APK ≤ 40 MB」已正式废止，改为按实测登记。
+
+---
+
+## 21. 全量语料用「轻索引 + 正文扫描」，不做全量全文倒排
+
+**决策**：索引只覆盖 标题 / 作者 / 拼音；正文检索改为对语料文件流式扫描。
+
+**理由（实测）**：全量 85 万首若建正文倒排：
+- 49k 首时索引已 77 MB → 全量约 **1.3 GB**
+- 设备建索引 49k 用 67 s → 全量约 **15–20 分钟**
+
+对比当前方案：
+| 指标 | 轻索引方案 | 全量倒排 |
+|---|---|---|
+| 索引体积 | 105.9 MB | ~1.3 GB |
+| 建索引（桌面） | 6.4 s | — |
+| 建索引（模拟器） | 117.9 s | ~15-20 min |
+| 标题/作者/拼音 P95 | 0.3–2.8 ms | — |
+| 正文检索 | 0–739 ms（流式扫描） | 快但代价不可接受 |
+
+**影响**：
+- 正文检索是「补充通道」，命中后与索引结果合并去重。
+- 常用诗句命中早，扫描可提前终止（如「明月」0 ms）；
+  生僻长句需扫完语料（实测 739 ms），UI 需有加载态。
+- `Basic` 索引（无位置）会让「静夜思」这类多词中文 0 命中
+  （QueryParser 生成 PhraseQuery），故保留 `WithFreqsAndPositions`。
+
+---
+
+## 22. 拼音只覆盖标题与作者
+
+**决策**：`--no-pinyin` / 默认（标题+作者）/ `--full-pinyin`（含正文）三档。
+全量语料用默认档。
+
+**理由**：正文拼音会让产物从 102.24 MB 涨到约 170 MB；
+而拼音检索的主要价值是「按标题/作者快速定位」。
+实测默认档产物 111.51 MB（正文拼音只多 9 MB，但正文拼音检索价值低且扫描通道已覆盖正文）。
+
+> 实测数据：`--no-pinyin` 全量 102.24 MB；默认档（标题+作者拼音）全量 **111.51 MB**，
+> 即标题/作者拼音只增 9.27 MB。`--full-pinyin` 未跑全量，
+> 按 49k 首实测（含正文拼音 9.86 MB / 无正文拼音）外推约 170 MB。
+---
+
+## 23. M2 列表/详情用「宽度驱动 Row」，暂未用 NavigableListDetailPaneScaffold
+
+**决策**：顶层导航用 `NavigationSuiteScaffold`（Compact 底部栏 / Medium+ Rail），
+但列表↔详情**双栏用宽度驱动的 Row**（列表 360dp + 详情余量），
+未使用 `NavigableListDetailPaneScaffold`。
+
+**理由**：
+- 该 API 在 adaptive 1.1.0 仍属 Experimental，签名随版本变动（navigator 泛型、
+  `ScaffoldPredictiveBackHandler` 参数），在无法快速迭代的环境里是主要编译风险源。
+- 我们需要的两个行为（列表固定 360dp、详情正文限宽 600dp）用 Row 几行即可，
+  且完全受 WindowSizeClass 驱动，不违反「布局只看窗口尺寸」的硬规则。
+
+**何时回退到官方组件**：升级 material3-adaptive 到 1.3+ 后，若需
+predictive back / pane 动画，应改用 `NavigableListDetailPaneScaffold`，
+届时本决策作废并更新 skill。
+
+**已验证**：838dp（Medium）出双栏、360dp 单栏；
+2440dp 宽下详情 pane < 560dp 时竖排按钮不出现（符合「竖排需 pane ≥ 560dp」）。
+---
+
+## 24. M5 模型选型：Qwen2.5-1.5B-Instruct（≤1.5B 约束）
+
+**决策**：T1 主用 `Qwen2.5-1.5B-Instruct Q4_K_M`（≈1.0GB），
+T0 兜底 `Qwen3-0.6B Q4_K_M`（≈0.4GB）。
+**不采用 Qwen3-1.7B**——参数量超出 1.5B 约束。
+
+**理由**：同量级里中文指令跟随最稳，适合「逐句、限字数、不许编典故」的强约束输出；
+Qwen3-0.6B 作为低内存兜底。备选（Gemma-3-1B / Llama-3.2-1B / R1-Distill-1.5B）
+可由 `model_catalog.json` 切换，不改代码。
+
+**完整契约**见 `docs/M5-LLM-CONTRACT.md`（逐句解析数据结构、缓存键、Prompt v1、
+生命周期降级、验收指标）。

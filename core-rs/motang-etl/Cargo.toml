@@ -11,5 +11,5 @@ motang-search = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 pinyin = { workspace = true }
-zhhz = { workspace = true }
+csv = { workspace = true }
 zstd = { workspace = true }

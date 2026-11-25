@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      仅 debug 生效：把提醒接收器临时导出，便于用 adb 广播验收通知。
+      release 构建不包含本文件，接收器保持 exported="false"。
+    -->
+    <application>
+        <receiver
+            android:name=".reminder.ReminderReceiver"
+            android:exported="true"
+            tools:replace="android:exported" />
+    </application>
+
+</manifest>

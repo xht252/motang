@@ -23,3 +23,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "motang"
 include(":app")
+include(":llm")

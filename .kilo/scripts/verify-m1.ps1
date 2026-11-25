@@ -1,29 +1,29 @@
-﻿# 墨唐 motang · M1 验收脚本（诗库数据 + Rust 检索）
+﻿# 墨唐 motang · M1 验收脚本（全量诗歌库 + Rust 检索）
 #
 # 覆盖：
 #   C1 cargo test
-#   C2 语料入库条数（读 ETL 产物）
-#   C3 桌面检索 P95（bench example）
-#   C4 设备端：清空数据 → 建索引 → 四类查询断言
+#   C2 全量语料产物与 assets
+#   C3 桌面：索引体积 / 索引通道 P95 / 正文扫描延迟
+#   C4 设备端：清数据 → 建索引 → 四类查询断言
 #
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File .kilo/scripts/verify-m1.ps1
 #   powershell -ExecutionPolicy Bypass -File .kilo/scripts/verify-m1.ps1 -SkipDevice
-#
-# 退出码：0 全 PASS；1 有 FAIL。
 
 [CmdletBinding()]
 param(
     [switch]$SkipDevice,
     [switch]$SkipDesktop,
     [int]$P95LimitUs = 50000,
-    [int]$IndexLimitMs = 30000
+    [int]$IndexMbLimit = 200,
+    [int]$ScanMsLimit = 3000,
+    [int]$ExpectedPoems = 850000
 )
 
 $ErrorActionPreference = "Continue"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $coreRs = Join-Path $repo "core-rs"
-$corpus = Join-Path $coreRs "out\poems.jsonl.zst"
+$corpus = Join-Path $coreRs "out\all.jsonl.zst"
 $debugApk = Join-Path $repo "app\build\outputs\apk\debug\app-debug.apk"
 $gradlew = Join-Path $repo "gradlew.bat"
 $results = [System.Collections.Generic.List[object]]::new()
@@ -56,7 +56,7 @@ function Add-Result {
     Write-Host ("[{0}] {1} {2} — {3}" -f $status, $Id, $Name, $Detail) -ForegroundColor $color
 }
 
-# cargo 必须在 core-rs 下执行：workspace 根在那里，否则报 "could not find Cargo.toml"。
+# cargo 必须在 core-rs 下执行。
 function Invoke-Cargo {
     param([string]$WorkDir, [string[]]$Arguments)
     $prev = Get-Location
@@ -75,59 +75,65 @@ function Invoke-Cargo {
 # ---------------------------------------------------------------------------
 if ($cargoExe) {
     $r = Invoke-Cargo -WorkDir $coreRs -Arguments @("test", "--workspace")
-    $ok = $r.ExitCode -eq 0
     $passed = ([regex]::Matches($r.Output, "test result: ok\. (\d+) passed") | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum).Sum
-    Add-Result "C1" "cargo test --workspace" ($ok -and $passed -gt 0) "passed=$passed exit=$($r.ExitCode)"
+    Add-Result "C1" "cargo test --workspace" ($r.ExitCode -eq 0 -and $passed -gt 0) "passed=$passed exit=$($r.ExitCode)"
 } else {
     Add-Result "C1" "cargo test --workspace" $false "找不到 cargo"
 }
 
 # ---------------------------------------------------------------------------
-# C2 语料产物
+# C2 全量语料产物
 # ---------------------------------------------------------------------------
 if (Test-Path $corpus) {
     $mb = [math]::Round((Get-Item $corpus).Length / 1MB, 2)
-    $authorsPath = Join-Path $coreRs "out\poems.authors.json"
+    $authorsPath = Join-Path $coreRs "out\all.authors.json"
     $authorCount = 0
     if (Test-Path $authorsPath) {
         $authorCount = (Get-Content -LiteralPath $authorsPath -Raw -Encoding UTF8 | ConvertFrom-Json).Count
     }
-    Add-Result "C2" "ETL 产物存在" $true "corpus=$mb MB, authors=$authorCount"
+    Add-Result "C2" "全量语料产物" ($authorCount -gt 10000) "corpus=$mb MB, authors=$authorCount"
 
     $assetsDir = Join-Path $repo "app\src\main\assets"
-    $assetsOk = (Test-Path (Join-Path $assetsDir "poems.jsonl.zst")) -and (Test-Path (Join-Path $assetsDir "poems.authors.json"))
+    $assetCorpus = Join-Path $assetsDir "poems.jsonl.zst"
+    $assetsOk = (Test-Path $assetCorpus) -and (Test-Path (Join-Path $assetsDir "poems.authors.json"))
     Add-Result "C2b" "assets 已就位" $assetsOk $assetsDir
 } else {
-    Add-Result "C2" "ETL 产物存在" $false "缺少 $corpus，请先跑 fetch-corpus.ps1 + motang-etl"
+    Add-Result "C2" "全量语料产物" $false "缺少 $corpus，请先跑 motang-etl（--input data/Poetry）"
     Add-Result "C2b" "assets 已就位" $false "语料不存在"
 }
 
 # ---------------------------------------------------------------------------
-# C3 桌面检索 P95
+# C3 桌面性能
 # ---------------------------------------------------------------------------
 if ($SkipDesktop) {
-    Add-Result "C3" "检索 P95" $true "SKIPPED"
+    Add-Result "C3" "索引体积" $true "SKIPPED"
+    Add-Result "C3b" "检索 P95" $true "SKIPPED"
+    Add-Result "C3c" "正文扫描" $true "SKIPPED"
 } elseif (-not $cargoExe -or -not (Test-Path $corpus)) {
-    Add-Result "C3" "检索 P95" $false "缺 cargo 或语料"
+    Add-Result "C3" "索引体积" $false "缺 cargo 或语料"
+    Add-Result "C3b" "检索 P95" $false "缺 cargo 或语料"
+    Add-Result "C3c" "正文扫描" $false "缺 cargo 或语料"
 } else {
     $benchDir = Join-Path $env:TEMP ("motang-m1-bench-" + [guid]::NewGuid().ToString("N"))
     $r = Invoke-Cargo -WorkDir $coreRs -Arguments @(
         "run", "--release", "-q", "-p", "motang-search", "--example", "bench", "--", $corpus, $benchDir
     )
     $out = $r.Output
-    $p95s = [regex]::Matches($out, "p95=\s*(\d+)\s*us") | ForEach-Object { [int]$_.Groups[1].Value }
-    $queries = [regex]::Matches($out, "query=(\S+)")
-    $hitsOk = $true
-    foreach ($q in @("明月", "李白", "静夜思", "jys")) {
-        if ($out -notmatch [regex]::Escape("query=$q")) { $hitsOk = $false }
-    }
-    # 关键查询必须有命中（静夜思=1、jys>0）
-    if ($out -match "query=静夜思\s+hits=0") { $hitsOk = $false }
-    if ($out -match "query=jys\s+hits=0") { $hitsOk = $false }
 
+    $loaded = [regex]::Match($out, "载入 (\d+) 首").Groups[1].Value
+    $loadedOk = [int64]$loaded -ge $ExpectedPoems
+
+    $indexMb = [double]([regex]::Match($out, "索引体积 ([\d.]+) MB").Groups[1].Value)
+    Add-Result "C3" "索引体积" ($indexMb -gt 0 -and $indexMb -le $IndexMbLimit) "$indexMb MB (limit $IndexMbLimit), 载入=$loaded"
+
+    $p95s = [regex]::Matches($out, "\[index\].*?p95=\s*(\d+) us") | ForEach-Object { [int]$_.Groups[1].Value }
     $worst = if ($p95s.Count -gt 0) { ($p95s | Measure-Object -Maximum).Maximum } else { -1 }
-    $p95Ok = $worst -ge 0 -and $worst -le $P95LimitUs
-    Add-Result "C3" "检索 P95" ($p95Ok -and $hitsOk) ("worstP95=${worst}us limit=${P95LimitUs}us hitsOk=$hitsOk")
+    $hitsOk = ($out -match "query=静夜思\s+total=[1-9]") -and ($out -match "query=jys\s+total=[1-9]") -and ($out -match "query=libai\s+total=[1-9]")
+    Add-Result "C3b" "索引通道 P95" ($worst -ge 0 -and $worst -le $P95LimitUs -and $hitsOk -and $loadedOk) ("worstP95=${worst}us hitsOk=$hitsOk")
+
+    $scanMs = [regex]::Matches($out, "\[scan \].*?first=\s*(\d+) ms") | ForEach-Object { [int]$_.Groups[1].Value }
+    $worstScan = if ($scanMs.Count -gt 0) { ($scanMs | Measure-Object -Maximum).Maximum } else { -1 }
+    Add-Result "C3c" "正文扫描延迟" ($worstScan -ge 0 -and $worstScan -le $ScanMsLimit) "worst=${worstScan}ms limit=${ScanMsLimit}ms"
 }
 
 # ---------------------------------------------------------------------------
@@ -146,28 +152,27 @@ if ($SkipDevice) {
     if (-not $booted) {
         Add-Result "C4" "设备端检索" $false "无在线设备"
     } else {
-        # 构建（会顺带跑 cargo-ndk + uniffi）
         $null = & $gradlew ":app:assembleDebug" 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $debugApk)) {
             Add-Result "C4" "设备端检索" $false "assembleDebug 失败"
         } else {
             & $adbExe install -r $debugApk 2>&1 | Out-Null
-            # 清空 app 数据，强制走「首次建索引」路径
             & $adbExe shell pm clear "io.github.xht252.motang" 2>&1 | Out-Null
 
             $indexOk = $false
             $buildMs = -1
+            $poems = 0
             $searchOk = $true
             $details = @()
 
-            foreach ($q in @("明月", "jys", "libai", "静夜思")) {
+            # 全量建索引在模拟器约 2 分钟，给 5 分钟窗口。
+            foreach ($q in @("静夜思", "jys", "libai", "床前明月光")) {
                 & $adbExe shell am force-stop "io.github.xht252.motang" 2>$null | Out-Null
                 & $adbExe logcat -c 2>$null | Out-Null
                 & $adbExe shell am start -n "io.github.xht252.motang/.MainActivity" -e query $q 2>&1 | Out-Null
 
-                # 首次会建索引（模拟器约 60s），给足窗口
                 $log = ""
-                for ($i = 0; $i -lt 40; $i++) {
+                for ($i = 0; $i -lt 100; $i++) {
                     Start-Sleep -Seconds 3
                     $log = & $adbExe logcat -d -s MotangM1:I 2>&1 | Out-String
                     if ($log -match "search query=") { break }
@@ -175,6 +180,7 @@ if ($SkipDevice) {
 
                 if ($log -match "index built: poems=(\d+) elapsedMs=(\d+)") {
                     $indexOk = $true
+                    $poems = [int]$Matches[1]
                     $buildMs = [int]$Matches[2]
                 }
                 if ($log -match "search query=$([regex]::Escape($q)) total=(\d+)") {
@@ -187,7 +193,7 @@ if ($SkipDevice) {
                 }
             }
 
-            Add-Result "C4a" "设备建索引" $indexOk ("elapsedMs=$buildMs (模拟器仅供参考，指标以真机为准)")
+            Add-Result "C4a" "设备建索引" $indexOk "poems=$poems elapsedMs=$buildMs (模拟器仅供参考)"
             Add-Result "C4b" "设备四类查询" $searchOk ($details -join " ")
         }
     }

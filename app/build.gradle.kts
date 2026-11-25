@@ -108,8 +108,61 @@ val cargoBuildRelease by tasks.registering(Exec::class) {
     outputs.dir(rustJniReleaseDir)
 }
 
-val generateUniffiBindings by tasks.registering(Exec::class) {
-    group = "rust"
+// ---------------------------------------------------------------------------
+// 语料 assets 生成
+// ---------------------------------------------------------------------------
+// 语料源与派生产物都不入库（228 MB / 111 MB，见 .gitignore 与 docs/DATA-SOURCES.md）。
+// 因此构建时必须能从 data/Poetry 重新生成 assets；已存在且不比源数据旧则跳过。
+val corpusSourceDir = rootProject.layout.projectDirectory.dir("data/Poetry")
+val assetsDir = layout.projectDirectory.dir("src/main/assets")
+val corpusAsset = assetsDir.file("poems.jsonl.zst").asFile
+val authorsAsset = assetsDir.file("poems.authors.json").asFile
+
+fun newestCsv(dir: File): Long {
+    if (!dir.isDirectory) return 0L
+    return dir.listFiles { f -> f.extension == "csv" }?.maxOfOrNull { it.lastModified() } ?: 0L
+}
+
+val generateCorpusAssets by tasks.registering(Exec::class) {
+    group = "corpus"
+    description = "从 data/Poetry 生成 app assets（缺失或源数据更新时）"
+
+    onlyIf {
+        !corpusAsset.isFile ||
+            !authorsAsset.isFile ||
+            corpusAsset.lastModified() < newestCsv(corpusSourceDir.asFile)
+    }
+
+    workingDir = rustProjectDir.asFile
+    commandLine(
+        buildList {
+            add(cargoExe)
+            add("run")
+            add("--release")
+            add("-q")
+            add("-p"); add("motang-etl")
+            add("--")
+            add("build")
+            add("--input"); add(corpusSourceDir.asFile.absolutePath)
+            add("--output"); add(corpusAsset.absolutePath)
+        },
+    )
+
+    // ETL 会在同目录写出 poems.authors.json（由 poems.jsonl.zst 派生文件名）。
+    outputs.file(corpusAsset)
+    outputs.file(authorsAsset)
+
+    doFirst {
+        if (!corpusSourceDir.asFile.isDirectory) {
+            throw GradleException(
+                "缺少语料源 ${corpusSourceDir.asFile.absolutePath}。" +
+                    "请按 docs/DATA-SOURCES.md 放回 data/Poetry（MIT, Copyright 2018 Werner）。",
+            )
+        }
+    }
+}
+
+val generateUniffiBindings by tasks.registering(Exec::class) {    group = "rust"
     description = "从 debug .so 生成 uniffi Kotlin 绑定"
     dependsOn(cargoBuildDebug)
     workingDir = rustProjectDir.asFile
@@ -276,6 +329,7 @@ dependencies {
     implementation(libs.material3Adaptive)
     implementation(libs.material3AdaptiveLayout)
     implementation(libs.material3AdaptiveNavigation)
+    implementation(libs.material3AdaptiveNavSuite)
     implementation(libs.androidxWindow)
 
     implementation(libs.androidxCoreKtx)
@@ -288,6 +342,10 @@ dependencies {
     implementation(libs.androidxRoomKtx)
     ksp(libs.androidxRoomCompiler)
     implementation(libs.androidxDatastorePreferences)
+    implementation(libs.androidxWorkRuntime)
+    implementation(project(":llm"))
+
+    testImplementation(libs.junit)
 
     // uniffi 0.32 生成的 Kotlin 绑定使用 JNA direct mapping，必须显式依赖。
     // 必须用 @aar：Maven Central 同时发布 jna.jar（无 Android native）与 jna.aar
@@ -307,11 +365,14 @@ dependencies {
 // "Task with name 'preDebugBuild' not found"。因此统一用 matching + configureEach，
 // 任务出现时才挂依赖（对尚未创建的任务同样生效）。
 tasks.matching { it.name.startsWith("pre") && it.name.endsWith("Build") }
-    .configureEach { dependsOn(generateUniffiBindings) }
+    .configureEach { dependsOn(generateUniffiBindings, generateCorpusAssets) }
 tasks.matching { it.name == "preReleaseBuild" }
     .configureEach { dependsOn(cargoBuildRelease) }
 // Kotlin 编译与 KSP 同样需要绑定文件；按名字匹配，避免依赖 KGP 内部类名。
+// 语料 assets 也要在 mergeAssets 之前就绪。
 tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
     .configureEach { dependsOn(generateUniffiBindings) }
 tasks.matching { it.name.startsWith("ksp") && it.name.endsWith("Kotlin") }
     .configureEach { dependsOn(generateUniffiBindings) }
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
+    .configureEach { dependsOn(generateCorpusAssets) }
