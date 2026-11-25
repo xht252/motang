@@ -1,0 +1,25 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "instructions": [
+    "AGENTS.md",
+    ".kilo/rules/project.md"
+  ],
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "git log *": "allow",
+      "git status *": "allow",
+      "git diff *": "allow",
+      "./gradlew*": "allow",
+      "gradlew.bat*": "allow",
+      "cargo test*": "allow",
+      "cargo build*": "allow",
+      "cargo ndk*": "allow",
+      "cargo clippy*": "allow",
+      "cargo fmt*": "allow",
+      "adb devices*": "allow",
+      "adb logcat*": "allow",
+      "powershell -ExecutionPolicy Bypass -File .kilo/scripts/*": "allow"
+    }
+  }
+}

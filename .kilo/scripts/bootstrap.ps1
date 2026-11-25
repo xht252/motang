@@ -37,6 +37,40 @@ function Test-Cmd([string]$Name) {
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+# 原生程序把错误写到 stderr 时，$ErrorActionPreference='Stop' 会把它当成
+# 终止错误（NativeCommandError）。探测类命令（如 `cargo ndk --version` 在未安装
+# 时必然走 stderr）必须用本函数：只看退出码，不把 stderr 当异常。
+function Invoke-NativeProbe {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @()
+    )
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = & $FilePath @Arguments 2>&1 | Out-String
+        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $out.Trim() }
+    } catch {
+        return [pscustomobject]@{ ExitCode = -1; Output = $_.Exception.Message }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+# 各阶段失败不互相连坐：记录后继续，脚本末尾统一汇总。
+$script:PhaseFailures = [System.Collections.Generic.List[string]]::new()
+
+function Invoke-Phase {
+    param([string]$Name, [scriptblock]$Body)
+    try {
+        & $Body
+    } catch {
+        $msg = "{0} 失败：{1}" -f $Name, $_.Exception.Message
+        Write-Warning $msg
+        $script:PhaseFailures.Add($msg)
+    }
+}
+
 if (-not (Test-Path (Join-Path $JdkHome "bin\java.exe"))) {
     throw "找不到 JDK：$JdkHome。请用 -JdkHome 指定正确路径。"
 }
@@ -140,11 +174,16 @@ if (-not $SkipRust) {
     rustup component add rustfmt clippy | Out-Host
     rustup target add aarch64-linux-android x86_64-linux-android | Out-Host
 
-    $cargoNdkVersion = cargo ndk --version 2>$null
-    if (-not $cargoNdkVersion) {
+    # 用 Invoke-NativeProbe：未安装 cargo-ndk 时该命令写 stderr 且退出码非零。
+    $cargoNdk = Invoke-NativeProbe -FilePath "cargo" -Arguments @("ndk", "--version")
+    if ($cargoNdk.ExitCode -ne 0) {
         cargo install cargo-ndk --locked | Out-Host
+        $cargoNdk = Invoke-NativeProbe -FilePath "cargo" -Arguments @("ndk", "--version")
+    }
+    if ($cargoNdk.ExitCode -eq 0) {
+        Write-Host "cargo-ndk 就绪：$($cargoNdk.Output)"
     } else {
-        Write-Host "cargo-ndk 已存在：$cargoNdkVersion"
+        throw "cargo-ndk 安装后仍不可用：$($cargoNdk.Output)"
     }
 } else {
     Write-Host "跳过 Rust（-SkipRust）。"
@@ -166,10 +205,37 @@ if (-not $SkipGradle) {
     }
 
     $gradleBat = Join-Path $gradleHome "bin\gradle.bat"
-    if (-not (Test-Path (Join-Path $PSScriptRoot "..\..\gradlew.bat"))) {
-        & $gradleBat wrapper --gradle-version $GradleVersion --distribution-type bin
-    } else {
+    $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+    $wrapperBat = Join-Path $repoRoot "gradlew.bat"
+
+    if (Test-Path $wrapperBat) {
         Write-Host "wrapper 已存在，跳过生成。"
+    } else {
+        # 关键：在空目录里生成 wrapper，再拷回仓库。
+        # 直接在本仓库跑 `gradle wrapper` 会先配置构建脚本，
+        # 而构建脚本依赖 AGP/Kotlin 插件下载；一旦网络或版本有问题，
+        # wrapper 就生成不出来，形成「没有 wrapper 就无法构建」的死锁。
+        $sandbox = Join-Path $temp "wrapper-sandbox"
+        if (Test-Path $sandbox) { Remove-Item -Recurse -Force $sandbox }
+        New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $sandbox "settings.gradle.kts") -Value 'rootProject.name = "wrapper-gen"' -Encoding UTF8
+
+        Push-Location $sandbox
+        try {
+            & $gradleBat wrapper --gradle-version $GradleVersion --distribution-type bin --no-daemon | Out-Host
+        } finally {
+            Pop-Location
+        }
+
+        foreach ($item in @("gradlew", "gradlew.bat")) {
+            $src = Join-Path $sandbox $item
+            if (Test-Path $src) { Copy-Item -LiteralPath $src -Destination $repoRoot -Force }
+        }
+        $wrapperSrc = Join-Path $sandbox "gradle\wrapper"
+        $wrapperDst = Join-Path $repoRoot "gradle\wrapper"
+        New-Item -ItemType Directory -Path $wrapperDst -Force | Out-Null
+        Copy-Item -Path (Join-Path $wrapperSrc "*") -Destination $wrapperDst -Force
+        Write-Host "已生成 wrapper 并拷入仓库。"
     }
 } else {
     Write-Host "跳过 Gradle（-SkipGradle）。"
@@ -190,14 +256,16 @@ if (-not (Test-Path $localProps)) {
 }
 
 if (-not $SkipAvd) {
-    Write-Step "A6 AVD（$AvdName）"
-    $avdManager = Join-Path $SdkRoot "cmdline-tools\latest\bin\avdmanager.bat"
-    $existing = & $avdManager list avd 2>$null | Out-String
-    if ($existing -match [regex]::Escape($AvdName)) {
-        Write-Host "AVD 已存在：$AvdName"
-    } else {
-        # pixel_fold 档案若不存在，avdmanager 会报错；此时改 -d pixel_tablet 或其它平板档案。
-        "no" | & $avdManager create avd -n $AvdName -k $SystemImage -d pixel_fold | Out-Host
+    Invoke-Phase -Name "A6 AVD" -Body {
+        Write-Step "A6 AVD（$AvdName）"
+        $avdManager = Join-Path $SdkRoot "cmdline-tools\latest\bin\avdmanager.bat"
+        $existing = (Invoke-NativeProbe -FilePath $avdManager -Arguments @("list", "avd")).Output
+        if ($existing -match [regex]::Escape($AvdName)) {
+            Write-Host "AVD 已存在：$AvdName"
+        } else {
+            # pixel_fold 档案若不存在，avdmanager 会报错；此时改 -d pixel_tablet 或其它平板档案。
+            "no" | & $avdManager create avd -n $AvdName -k $SystemImage -d pixel_fold | Out-Host
+        }
     }
 }
 
@@ -207,20 +275,31 @@ if (-not $SkipAvd) {
 Write-Step "A7 自检"
 
 $checks = [ordered]@{}
-$checks["java"] = (cmd /c "`"$JdkHome\bin\java.exe`" -version 2>&1" | Select-Object -First 1)
 $sdkManagerPath = Join-Path $SdkRoot "cmdline-tools\latest\bin\sdkmanager.bat"
-$checks["sdkmanager"] = if (Test-Path $sdkManagerPath) { (& $sdkManagerPath --version 2>$null) } else { "缺失" }
+$checks["java"] = (Invoke-NativeProbe -FilePath (Join-Path $JdkHome "bin\java.exe") -Arguments @("-version")).Output -split "`n" | Select-Object -First 1
+$checks["sdkmanager"] = if (Test-Path $sdkManagerPath) { (Invoke-NativeProbe -FilePath $sdkManagerPath -Arguments @("--version")).Output } else { "缺失" }
 $checks["platform-36"] = if (Test-Path (Join-Path $SdkRoot "platforms\android-36")) { "已安装" } else { "缺失" }
 $checks["ndk"] = if (Test-Path $ndkHome) { "已安装" } else { "缺失" }
-$checks["rustc"] = if (Test-Cmd "rustc") { (rustc --version) } else { "缺失" }
-$checks["android targets"] = if (Test-Cmd "rustup") { ((rustup target list --installed) -join ", ") } else { "缺失" }
-$checks["cargo-ndk"] = if (Test-Cmd "cargo") { (cargo ndk --version 2>$null) } else { "缺失" }
+$checks["rustc"] = if (Test-Cmd "rustc") { (Invoke-NativeProbe -FilePath "rustc" -Arguments @("--version")).Output } else { "缺失" }
+$checks["android targets"] = if (Test-Cmd "rustup") { (Invoke-NativeProbe -FilePath "rustup" -Arguments @("target", "list", "--installed")).Output -replace "`r?`n", ", " } else { "缺失" }
+$cargoNdkProbe = if (Test-Cmd "cargo") { Invoke-NativeProbe -FilePath "cargo" -Arguments @("ndk", "--version") } else { $null }
+$checks["cargo-ndk"] = if ($cargoNdkProbe -and $cargoNdkProbe.ExitCode -eq 0) { $cargoNdkProbe.Output } else { "缺失" }
 $checks["gradlew"] = if (Test-Path (Join-Path $PSScriptRoot "..\..\gradlew.bat")) { "已生成" } else { "缺失" }
+$checks["gradlew 模板"] = if (Test-Path (Join-Path $PSScriptRoot "..\..\gradle\wrapper\gradle-wrapper.properties")) { "properties 已入库" } else { "缺失" }
 $checks["adb devices"] = if (Test-Cmd "adb") { ((adb devices) -join " ") } else { "缺失" }
 $checks["llvm-readelf"] = if (Test-Path "$ndkHome\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readelf.exe") { "已安装" } else { "缺失" }
 
 $checks.GetEnumerator() | ForEach-Object { "{0,-18} {1}" -f $_.Key, $_.Value } | Out-Host
 
 Write-Host ""
+if ($script:PhaseFailures.Count -gt 0) {
+    Write-Host "以下阶段失败（其余阶段已继续执行）：" -ForegroundColor Yellow
+    $script:PhaseFailures | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+    Write-Host ""
+    Write-Host "修复后可单独重跑对应阶段，例如：" -ForegroundColor Yellow
+    Write-Host "  powershell -ExecutionPolicy Bypass -File .kilo/scripts/bootstrap.ps1 -SkipSdk -SkipAvd" -ForegroundColor Yellow
+    exit 1
+}
+
 Write-Host "引导完成。下一步：.\gradlew.bat :app:assembleDebug" -ForegroundColor Green
 Write-Host "然后执行：powershell -ExecutionPolicy Bypass -File .kilo/scripts/verify-m0.ps1" -ForegroundColor Green

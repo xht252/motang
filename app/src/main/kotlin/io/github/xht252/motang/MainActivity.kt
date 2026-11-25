@@ -19,7 +19,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MotangTheme {
-                MotangApp()
+                // 支持 adb 驱动的自动化验收：
+                //   adb shell am start -n io.github.xht252.motang/.MainActivity -e query 明月
+                MotangApp(initialQuery = intent?.getStringExtra("query"))
             }
         }
     }

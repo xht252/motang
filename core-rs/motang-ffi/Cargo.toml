@@ -7,17 +7,18 @@ description = "墨唐 Kotlin↔Rust 绑定层（uniffi）"
 
 [lib]
 name = "motang_ffi"
-# cdylib 供 Android 加载；rlib 供同 workspace 内引用与单测。
+# cdylib 供 Android 加载；rlib 供 uniffi-bindgen 与单测。
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
 uniffi = { workspace = true }
 motang-search = { workspace = true }
 thiserror = { workspace = true }
+serde_json = { workspace = true }
+tantivy = { workspace = true }
+zstd = { workspace = true }
 
-# 绑定生成器与库同版本、同 crate，避免 `cargo install uniffi-bindgen` 的版本漂移。
-# 使用 proc-macro 模式（#[uniffi::export]），**不需要** build.rs 与 UDL。
-# required-features 确保默认构建不把 clap/camino 带进 cdylib。
+# 绑定生成器与库同版本、同 crate，避免 cargo install 造成版本漂移。
 [[bin]]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"

@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.androidApplication)
@@ -24,8 +25,40 @@ val ndkHome: String? =
         ?: System.getenv("ANDROID_NDK_HOME")
         ?: System.getenv("ANDROID_NDK_ROOT")
 
+val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+
+/**
+ * 解析 cargo 可执行文件。
+ *
+ * 为什么不能直接写 "cargo"：Gradle 守护进程的 PATH 往往不含
+ * %USERPROFILE%\.cargo\bin（bootstrap 只改了当前 PowerShell 会话的 PATH）。
+ * 结果就是「命令行能编译、Gradle 任务找不到 cargo」。
+ * 优先级：Gradle 属性 > CARGO_HOME > 用户默认路径 > PATH。
+ */
+fun resolveCargo(): String {
+    (project.findProperty("motang.cargo") as String?)?.let { return it }
+    System.getenv("CARGO_HOME")?.let { cargoHome ->
+        val exe = File(cargoHome, if (isWindows) "bin/cargo.exe" else "bin/cargo")
+        if (exe.isFile) return exe.absolutePath
+    }
+    val userHome = System.getProperty("user.home")
+    if (userHome != null) {
+        val exe = File(userHome, if (isWindows) ".cargo/bin/cargo.exe" else ".cargo/bin/cargo")
+        if (exe.isFile) return exe.absolutePath
+    }
+    return "cargo"
+}
+
+val cargoExe = resolveCargo()
+
 fun cargoEnv(): Map<String, String> = buildMap {
     ndkHome?.let { put("ANDROID_NDK_HOME", it) }
+    // cargo-ndk 需要 rustup 的工具链目录可被 cargo 找到；继承当前进程环境即可，
+    // 仅在缺 CARGO_HOME 时补默认值，避免覆盖用户的 rustup 配置。
+    if (System.getenv("CARGO_HOME") == null) {
+        val userHome = System.getProperty("user.home")
+        if (userHome != null) put("CARGO_HOME", File(userHome, ".cargo").absolutePath)
+    }
 }
 
 val cargoBuildDebug by tasks.registering(Exec::class) {
@@ -35,7 +68,7 @@ val cargoBuildDebug by tasks.registering(Exec::class) {
     environment(cargoEnv())
     commandLine(
         buildList {
-            add("cargo")
+            add(cargoExe)
             add("ndk")
             add("-t"); add("arm64-v8a")
             add("-t"); add("x86_64")
@@ -59,7 +92,7 @@ val cargoBuildRelease by tasks.registering(Exec::class) {
     environment(cargoEnv())
     commandLine(
         buildList {
-            add("cargo")
+            add(cargoExe)
             add("ndk")
             add("-t"); add("arm64-v8a")
             add("-o"); add(rustJniReleaseDir.get().asFile.absolutePath)
@@ -91,7 +124,7 @@ val generateUniffiBindings by tasks.registering(Exec::class) {
     }
     commandLine(
         buildList {
-            add("cargo")
+            add(cargoExe)
             add("run")
             add("-p"); add("motang-ffi")
             add("--features"); add("bindgen-cli")
@@ -112,6 +145,18 @@ val generateUniffiBindings by tasks.registering(Exec::class) {
 // 说明：不额外注册「创建输出目录」的任务——它会与 generateUniffiBindings 的
 // outputs.dir 重叠，Gradle 会报 overlapping outputs。uniffi 自身会 create_dir_all。
 
+// 签名口令来源：Gradle 属性 > 环境变量 > 仓库根 keystore.properties（已 gitignore）。
+// 三者任一缺失则 storePath 为 null，走「无签名」分支并只告警。
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.isFile) f.inputStream().use { load(it) }
+}
+
+fun signingValue(key: String, envName: String): String? =
+    (project.findProperty(key) as String?)
+        ?: System.getenv(envName)
+        ?: keystoreProps.getProperty(key)
+
 android {
     namespace = "io.github.xht252.motang"
     compileSdk = 35
@@ -125,28 +170,26 @@ android {
     }
 
     // 自签直装：M0 起固定 release 签名，保证后续版本可覆盖安装。
-    // 口令不落仓库，经 ~/.gradle/gradle.properties 或环境变量注入。
+    // 口令不落仓库。来源优先级：Gradle 属性 > 环境变量 > 仓库根 keystore.properties（gitignore）。
     signingConfigs {
         create("release") {
-            val storePath = (project.findProperty("MOTANG_STORE_FILE") as String?)
-                ?: System.getenv("MOTANG_STORE_FILE")
+            val storePath = signingValue("MOTANG_STORE_FILE", "MOTANG_STORE_FILE")
             if (storePath != null) {
                 storeFile = rootProject.file(storePath)
-                storePassword = (project.findProperty("MOTANG_STORE_PASSWORD") as String?)
-                    ?: System.getenv("MOTANG_STORE_PASSWORD")
-                keyAlias = (project.findProperty("MOTANG_KEY_ALIAS") as String?)
-                    ?: System.getenv("MOTANG_KEY_ALIAS")
-                keyPassword = (project.findProperty("MOTANG_KEY_PASSWORD") as String?)
-                    ?: System.getenv("MOTANG_KEY_PASSWORD")
+                storePassword = signingValue("MOTANG_STORE_PASSWORD", "MOTANG_STORE_PASSWORD")
+                keyAlias = signingValue("MOTANG_KEY_ALIAS", "MOTANG_KEY_ALIAS")
+                keyPassword = signingValue("MOTANG_KEY_PASSWORD", "MOTANG_KEY_PASSWORD")
             }
         }
     }
 
     buildTypes {
         debug {
-            // debug 也走同一套 release 密钥（若已配置），避免换签名后无法覆盖安装。
-            signingConfig = signingConfigs.getByName("release").storeFile?.let {
-                signingConfigs.getByName("release")
+            // 配置了 release 密钥就沿用（避免换签名后无法覆盖安装）；
+            // 未配置时保持 AGP 默认的 debug 签名，**不要**赋 null——那会导致
+            // 产出 app-debug-unsigned.apk，无法安装。
+            signingConfigs.getByName("release").takeIf { it.storeFile != null }?.let {
+                signingConfig = it
             }
             // 模拟器需要 x86_64；真机 arm64。abiFilters 同时约束
             // rustJniLibs 与 JNA aar 内的 libjnidispatch.so。
@@ -164,10 +207,6 @@ android {
             val releaseSigning = signingConfigs.getByName("release")
             if (releaseSigning.storeFile != null) {
                 signingConfig = releaseSigning
-            } else {
-                logger.warn(
-                    "WARN: 未配置 MOTANG_STORE_FILE，release 将无签名。首次安装前必须补齐签名配置。",
-                )
             }
             ndk { abiFilters += listOf("arm64-v8a") }
         }
@@ -216,6 +255,16 @@ kotlin {
     }
 }
 
+// 签名缺失只告警，不阻断构建：M0 先保证管线可跑通。
+// 但自签直装场景下「首次装机必须用 release 签名」，否则后续无法覆盖安装
+// （Room 里的打卡与统计会随卸载丢失）。见 .kilo/memory/DECISIONS.md。
+if (android.signingConfigs.getByName("release").storeFile == null) {
+    logger.warn(
+        "WARN: 未配置 MOTANG_STORE_FILE —— release APK 将无签名、无法安装。" +
+            "请在 ~/.gradle/gradle.properties 或环境变量中提供签名四件套（见 keystore/README.md）。",
+    )
+}
+
 dependencies {
     implementation(platform(libs.composeBom))
     implementation(libs.composeUi)
@@ -252,9 +301,17 @@ dependencies {
 // ---------------------------------------------------------------------------
 // srcDir 只让 AGP 把生成目录当作源根，并不建立任务依赖；必须显式声明，
 // 否则并行构建时 Kotlin 编译可能先于绑定生成开始，报 "Unresolved reference"。
-// 用任务名匹配而非 KotlinCompile 类型：KGP 各版本的任务类型层级会变，
-// 按名字匹配不会因类名迁移而编译失败。
-tasks.named("preDebugBuild") { dependsOn(generateUniffiBindings) }
-tasks.named("preReleaseBuild") { dependsOn(cargoBuildRelease, generateUniffiBindings) }
+//
+// 注意：AGP 的 preBuild/preDebugBuild 等任务由 Variant API 在配置后段创建，
+// 直接 tasks.named("preDebugBuild") 会在配置阶段抛
+// "Task with name 'preDebugBuild' not found"。因此统一用 matching + configureEach，
+// 任务出现时才挂依赖（对尚未创建的任务同样生效）。
+tasks.matching { it.name.startsWith("pre") && it.name.endsWith("Build") }
+    .configureEach { dependsOn(generateUniffiBindings) }
+tasks.matching { it.name == "preReleaseBuild" }
+    .configureEach { dependsOn(cargoBuildRelease) }
+// Kotlin 编译与 KSP 同样需要绑定文件；按名字匹配，避免依赖 KGP 内部类名。
 tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
+    .configureEach { dependsOn(generateUniffiBindings) }
+tasks.matching { it.name.startsWith("ksp") && it.name.endsWith("Kotlin") }
     .configureEach { dependsOn(generateUniffiBindings) }

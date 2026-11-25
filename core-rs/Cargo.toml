@@ -12,6 +12,18 @@ license = "MIT"
 motang-search = { path = "motang-search" }
 uniffi = "=0.32.2"
 thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 语料/检索相关版本由 M1 依赖配对 spike 实测锁定，
+# 见 .kilo/memory/M1-DEPENDENCY-SPIKE.md。改版本前必须重跑 spike。
+tantivy = "0.26.2"
+tantivy-jieba = "0.21"
+pinyin = "0.11"
+# 繁简转换用 zhhz（Apache-2.0，纯 Rust，数据内嵌）。
+# 禁止换成 zhconv：其许可证为 GPL-2.0-or-later，会污染 MIT 仓库。
+zhhz = "0.8.2"
+zstd = "0.13"
 
 # 说明：release 统一 panic = "unwind"。
 # 理由：uniffi 需要 unwind 才能把 Rust panic 转成 Kotlin 异常；而 Cargo 的

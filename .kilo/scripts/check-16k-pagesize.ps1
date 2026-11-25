@@ -107,13 +107,25 @@ function Test-SoAlignment {
 }
 
 $target = if ($PSCmdlet.ParameterSetName -eq "Apk") { $ApkPath } else { $SoPath }
-$all = Get-SoFiles -Path $target
+
+# Get-SoFiles 在路径不存在时会 throw；WarnOnly 语义下必须降级为警告 + 0 退出，
+# 否则「非阻断模式」在文件缺失时仍然阻断流水线。
+try {
+    $all = Get-SoFiles -Path $target
+} catch {
+    if ($WarnOnly) { Write-Warning $_.Exception.Message; exit 0 }
+    Write-Error $_.Exception.Message
+    exit 1
+}
+
 $files = if ($NameFilter) { @($all | Where-Object { $_.Name -eq $NameFilter }) } else { @($all) }
 
 if ($files.Count -eq 0) {
     $names = ($all | ForEach-Object { $_.Name }) -join ", "
-    Write-Error "未找到匹配 '$NameFilter' 的 .so（实际：$names）"
-    if (-not $WarnOnly) { exit 1 } else { exit 0 }
+    $msg = "未找到匹配 '$NameFilter' 的 .so（实际：$names）"
+    if ($WarnOnly) { Write-Warning $msg; exit 0 }
+    Write-Error $msg
+    exit 1
 }
 
 $results = $files | ForEach-Object { Test-SoAlignment -So $_ }

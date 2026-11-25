@@ -9,11 +9,15 @@
 |---|---|
 | 硬性约束（必读） | `.kilo/rules/project.md` |
 | 架构决策与事实纠偏 | `.kilo/memory/DECISIONS.md` |
+| 构建/验收踩坑 | `.kilo/memory/BUILD-TROUBLESHOOTING.md` |
 | 里程碑状态 / 版本矩阵 / 接口契约 | `.kilo/memory/MILESTONES.md` |
 | 九个专项 Skill | `.kilo/skills/*/SKILL.md` |
 | 子代理（架构 / 排障） | `.kilo/agent/*.md` |
 | 工具链引导 | `.kilo/scripts/bootstrap.ps1` |
 | M0 验收 | `.kilo/scripts/verify-m0.ps1` |
+| M1 验收 | `.kilo/scripts/verify-m1.ps1` |
+| 语料下载 | `.kilo/scripts/fetch-corpus.ps1` |
+| 依赖配对实测 | `.kilo/memory/M1-DEPENDENCY-SPIKE.md` |
 | 16KB 对齐校验 | `.kilo/scripts/check-16k-pagesize.ps1` |
 
 ## 首次构建
@@ -45,3 +49,12 @@ core-rs/                 Rust workspace
   motang-ffi/            uniffi 绑定层（cdylib + bindgen bin）
 .kilo/                   rules / skills / agent / memory / scripts
 ```
+
+## 已知事实（2026-11-25 实测）
+
+- M0 已验收通过：`cargo test` / `assembleDebug` / `assembleRelease` / 16KB 对齐 / 模拟器 `ping()` 全部 PASS。
+- release APK 8.47 MB，仅 arm64-v8a。
+- 本机 toolchain 不在 PATH（Rust 在 `%USERPROFILE%\.cargo\bin`，adb 在 `\platform-tools`，JDK 在 `D:\jdk21`）。
+  **Gradle 任务与脚本必须用绝对路径**，见 .kilo/memory/BUILD-TROUBLESHOOTING.md 第 2 条。
+- .ps1 必须 UTF-8 **with BOM**（PS 5.1 否则按 GBK 解码，中文注释会把脚本解析坏）。
+- 当前 keystore 是 M0 验证用临时密钥，正式使用前需重新生成并永不再换（DECISIONS 第 9 条）。

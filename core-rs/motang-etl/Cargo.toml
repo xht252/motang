@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "墨唐离线语料 ETL（chinese-poetry 清洗、繁简、拼音、去重）—— M1 填充实现"
+description = "墨唐离线语料 ETL（chinese-poetry 清洗、繁简、拼音、去重）"
 
 [dependencies]
+motang-search = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+pinyin = { workspace = true }
+zhhz = { workspace = true }
+zstd = { workspace = true }
