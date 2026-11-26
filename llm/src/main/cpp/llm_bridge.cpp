@@ -194,7 +194,28 @@ Java_io_github_xht252_motang_llm_LlmNative_generateStream(
         return env->NewStringUTF("");
     }
 
-    const std::string text = jstring_to_std(env, prompt);
+    const std::string raw_prompt = jstring_to_std(env, prompt);
+
+    // 套用模型自带 chat template：不套模板时模型会把提示词当成续写文本，
+    // 输出既不像解析也不稳定（实测问题）。
+    std::string text = raw_prompt;
+    {
+        const char* tmpl = llama_model_chat_template(g_model, nullptr);
+        llama_chat_message msgs[2];
+        msgs[0].role = "system";
+        msgs[0].content = "你是古典文学助教。仅依据给定诗文作答，不虚构典故，不确定处写「存疑」。";
+        msgs[1].role = "user";
+        msgs[1].content = raw_prompt.c_str();
+        const int need = llama_chat_apply_template(tmpl, msgs, 2, true, nullptr, 0);
+        if (need > 0) {
+            std::string buf(static_cast<size_t>(need), '\0');
+            const int got = llama_chat_apply_template(tmpl, msgs, 2, true, buf.data(), need);
+            if (got > 0) {
+                buf.resize(static_cast<size_t>(got));
+                text = buf;
+            }
+        }
+    }
 
     llama_memory_clear(llama_get_memory(g_ctx), true);
 

@@ -60,8 +60,11 @@ fun PoemDetailPane(
         // 用户没手动切换前，宽屏默认竖排。
         val useVertical = canVertical && (vertical || !narrow)
 
+        // 整页单一滚动容器：AI 结果与注释都在正文下方，必须能滚到。
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             androidx.compose.foundation.layout.Row(
@@ -125,15 +128,12 @@ fun PoemDetailPane(
                     fontSize = 22.sp * fontScale,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .height(520.dp)
                         .padding(vertical = 12.dp),
                 )
             } else {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState()),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     // 正文限宽 600dp 并居中：大屏上避免一行过长导致回读困难。
