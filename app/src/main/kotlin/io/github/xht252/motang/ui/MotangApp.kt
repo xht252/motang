@@ -260,7 +260,7 @@ fun MotangApp(initialQuery: String? = null) {
                             val generated = runCatching {
                                 llmClient.generateStream(
                                     prompt = buildPoemPrompt(sel.title, sel.author, sel.paragraphs),
-                                    maxTokens = 192,
+                                    maxTokens = 512,
                                     temperature = 0.3f,
                                 ) { delta ->
                                     // 流式追加：首个 token 即可见，避免 25s 空白。
@@ -384,7 +384,7 @@ private fun buildPoemPrompt(title: String, author: String, lines: List<String>):
         append("请逐句给出字词注释与白话译文，每句一行，简洁。")
     }
 /** prompt 版本：改 Prompt 结构时自增，缓存自动失效。 */
-private const val PROMPT_VER = 1
+private const val PROMPT_VER = 3
 
 /** 模型标识：换模型时修改，缓存自动失效。 */
 private const val MODEL_ID = "minicpm5-2b-q4km"

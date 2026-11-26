@@ -199,7 +199,7 @@ Java_io_github_xht252_motang_llm_LlmNative_generateStream(
         const char* tmpl = llama_model_chat_template(g_model, nullptr);
         llama_chat_message msgs[2];
         msgs[0].role = "system";
-        msgs[0].content = "你是古典文学助教。仅依据给定诗文作答，不虚构典故，不确定处写「存疑」。";
+        msgs[0].content = "你是古典文学助教。仅依据给定诗文作答，不虚构典故，不确定处写「存疑」。直接给出答案，不要输出思考过程。\n/no_think";
         msgs[1].role = "user";
         msgs[1].content = raw_prompt.c_str();
         const int need = llama_chat_apply_template(tmpl, msgs, 2, true, nullptr, 0);
@@ -283,6 +283,38 @@ Java_io_github_xht252_motang_llm_LlmNative_generateStream(
     }
 
     env->DeleteLocalRef(sink_cls);
+
+    // 截断到轮次结束标记：否则模型答完会继续生成「下一轮」，看起来像 prompt 复读。
+    {
+        static const char* kStops[] = {
+            "<|im_end|>", "<|im_start|>", "<|endoftext|>", "<|end|>",
+            "<|eot_id|>", "</s>", "[/INST]",
+        };
+        size_t cut = std::string::npos;
+        for (const char* marker : kStops) {
+            const size_t pos = answer.find(marker);
+            if (pos != std::string::npos && (cut == std::string::npos || pos < cut)) cut = pos;
+        }
+        if (cut != std::string::npos) answer.resize(cut);
+
+        // 剥离思考块：模型可能输出未闭合的 <think>，直接展示会像 prompt 复读。
+        const size_t think_end = answer.find("</think>");
+        if (think_end != std::string::npos) {
+            answer.erase(0, think_end + 8);
+        } else {
+            const size_t think_open = answer.find("<think>");
+            if (think_open != std::string::npos) answer.erase(0, think_open + 7);
+        }
+
+        // 若模型把 prompt 原样回显，去掉这段前缀。
+        if (!answer.empty() && answer.rfind(text, 0) == 0) {
+            answer.erase(0, text.size());
+        }
+        const size_t first = answer.find_first_not_of(" \t\r\n");
+        answer = (first == std::string::npos) ? std::string() : answer.substr(first);
+    }
+
+    LOGI("answer head: %.120s", answer.c_str());
     return env->NewStringUTF(answer.c_str());
 }
 
