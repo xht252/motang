@@ -35,7 +35,7 @@ android {
                     "-DGGML_OPENMP=OFF",
                     // 关掉 ccache 探测噪音
                     "-DGGML_CCACHE=OFF",
-                    // 16KB page size 对齐（NDK r27+ 默认已为 16KB，这里显式声明）
+                                                            // 16KB page size 对齐（NDK r27+ 默认已为 16KB，这里显式声明）
                     "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                 )
                 cppFlags += listOf("-O3", "-fexceptions", "-frtti")

@@ -13,7 +13,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Send
+    import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -41,7 +42,8 @@ enum class Destination(val label: String) {
     Search("检索"),
     CheckIn("打卡"),
     Stats("统计"),
-    Mastered("已背会"),
+    Chat("问诗"),
+        Mastered("已背会"),
     Settings("设置"),
 }
 
@@ -85,6 +87,8 @@ fun MotangScaffold(
     aiText: String,
     aiBusy: Boolean,
     onExplain: () -> Unit,
+    llmClient: io.github.xht252.motang.llm.LlmClient,
+    modelPath: String,
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onOpenPoem: (String) -> Unit,
@@ -107,7 +111,8 @@ fun MotangScaffold(
                                 Destination.Search -> Icons.Filled.Search
                                 Destination.CheckIn -> Icons.Filled.DateRange
                                 Destination.Stats -> Icons.Filled.List
-                                Destination.Mastered -> Icons.Filled.Star
+                                Destination.Chat -> Icons.Filled.Send
+                                    Destination.Mastered -> Icons.Filled.Star
                                 Destination.Settings -> Icons.Filled.Settings
                             },
                             contentDescription = entry.label,
@@ -148,6 +153,10 @@ fun MotangScaffold(
                         activeDays = stats.activeDays,
                         newPoems = stats.newPoems,
                         onExportPdf = onExportPdf,
+                    )
+                    Destination.Chat -> io.github.xht252.motang.ui.chat.ChatScreen(
+                        llmClient = llmClient,
+                        modelPath = modelPath,
                     )
                     Destination.Mastered -> io.github.xht252.motang.ui.checkin.MasteredPane(
                         sessions = mastered,

@@ -107,7 +107,7 @@ fun MotangApp(initialQuery: String? = null) {
             if (cached != null) {
                 parseLineBlocks(cached, poemLines.size)
             } else {
-                llmClient.loadModel(modelPath, 4, 2048)
+                llmClient.loadModel(modelPath, 6, 2048)
                 val text = llmClient.generate(buildLinePrompt(title, author, poemLines), 640, 0.3f)
                 if (text.isNotBlank()) explanations.put(key, PROMPT_VER, MODEL_ID, text)
                 parseLineBlocks(text, poemLines.size)
@@ -250,6 +250,8 @@ fun MotangApp(initialQuery: String? = null) {
             aiText = aiText,
             aiBusy = aiBusy,
 
+            llmClient = llmClient,
+            modelPath = modelPath,
             onExplain = {
                 val sel = state.selected
                 if (sel != null && !aiBusy) {
@@ -264,7 +266,7 @@ fun MotangApp(initialQuery: String? = null) {
                             return@launch
                         }
                         val error = runCatching {
-                            llmClient.loadModel(modelPath, 4, 2048)
+                            llmClient.loadModel(modelPath, 6, 2048)
                         }.getOrElse { it.message ?: "加载失败" }
                         aiText = if (error.isNotEmpty()) {
                             "模型加载失败：$error"
@@ -377,6 +379,10 @@ private fun MotangAppPreview() {
             aiText = "",
             aiBusy = false,
             onExplain = {},
+            llmClient = io.github.xht252.motang.llm.LlmClient(
+                androidx.compose.ui.platform.LocalContext.current,
+            ),
+            modelPath = "",
             onQueryChange = {},
             onSubmit = {},
             onOpenPoem = {},
