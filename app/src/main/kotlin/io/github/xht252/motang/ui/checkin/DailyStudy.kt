@@ -67,6 +67,8 @@ fun rememberDailyStudy(
     search: SearchRepository,
     study: StudyRepository,
     onCheckIn: suspend () -> Unit,
+    // 逐句解析：由调用方注入端侧模型（M5），返回与输入等长的解析列表。
+    explainLines: suspend (title: String, author: String, lines: List<String>) -> List<String>,
 ): Pair<DailyState, DailyActions> {
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf(DailyState()) }
@@ -116,6 +118,18 @@ fun rememberDailyStudy(
                     phase = DailyPhase.Analyzing,
                     lines = poem.paragraphs.map { LineAnalysis(it) },
                 )
+                // 异步补解析：先展示结构，再逐句填入，避免长时间空白。
+                scope.launch {
+                    runCatching {
+                        explainLines(poem.title, poem.author, poem.paragraphs)
+                    }.onSuccess { notes ->
+                        state = state.copy(
+                            lines = state.lines.mapIndexed { index, item ->
+                                item.copy(note = notes.getOrNull(index)?.takeIf { it.isNotBlank() })
+                            },
+                        )
+                    }
+                }
             }
         },
         learnDone = { mastered ->

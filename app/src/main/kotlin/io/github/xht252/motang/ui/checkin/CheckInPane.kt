@@ -99,6 +99,7 @@ private fun RecitingBlock(state: DailyState, actions: DailyActions) {
     val tokens = LocalInkTokens.current
     val poem = state.poem ?: return
 
+    Column(modifier = Modifier.fillMaxWidth()) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -130,6 +131,11 @@ private fun RecitingBlock(state: DailyState, actions: DailyActions) {
 
         Button(onClick = actions::finishReciting, modifier = Modifier.fillMaxWidth()) {
             Text("我背完了，看解析")
+
+        Button(onClick = actions::finishReciting, modifier = Modifier.fillMaxWidth()) {
+            Text("我背完了，看解析")
+        }
+    }
         }
     }
 }
@@ -157,7 +163,7 @@ private fun AnalyzingBlock(state: DailyState, actions: DailyActions) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(line.line, style = MaterialTheme.typography.bodyLarge, color = tokens.ink)
                 Text(
-                    text = line.note ?: "（解析待 M5 端侧模型生成）",
+                    text = line.note ?: "解析生成中…",
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.pencil,
                 )

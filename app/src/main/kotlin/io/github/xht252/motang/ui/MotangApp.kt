@@ -81,11 +81,6 @@ fun MotangApp(initialQuery: String? = null) {
     val liveMs = remember(session, tick) { tracker.snapshotMs() }
 
     val study = remember(application) { io.github.xht252.motang.data.StudyRepository(context) }
-    val (daily, dailyActions) = io.github.xht252.motang.ui.checkin.rememberDailyStudy(
-        search = application.repository,
-        study = study,
-        onCheckIn = { application.settings.checkInToday() },
-    )
     val exportPdf = io.github.xht252.motang.ui.checkin.rememberPdfExporter(study, streak)
 
     // ---- M5：端侧 LLM（独立进程 :llm） ----
@@ -102,6 +97,23 @@ fun MotangApp(initialQuery: String? = null) {
     val modelPath = remember(context) {
         java.io.File(context.getExternalFilesDir("models"), "MiniCPM5-2B-Q4_K_M.gguf").absolutePath
     }
+    val (daily, dailyActions) = io.github.xht252.motang.ui.checkin.rememberDailyStudy(
+        search = application.repository,
+        study = study,
+        onCheckIn = { application.settings.checkInToday() },
+        explainLines = { title, author, poemLines ->
+            val key = "daily|$title|$author"
+            val cached = explanations.get(key, PROMPT_VER, MODEL_ID)
+            if (cached != null) {
+                parseNumbered(cached, poemLines.size)
+            } else {
+                llmClient.loadModel(modelPath, 4, 2048)
+                val text = llmClient.generate(buildLinesPrompt(title, author, poemLines), 512, 0.3f)
+                if (text.isNotBlank()) explanations.put(key, PROMPT_VER, MODEL_ID, text)
+                parseNumbered(text, poemLines.size)
+            }
+        },
+    )
 
 
     var statsVersion by remember { mutableIntStateOf(0) }
@@ -388,3 +400,28 @@ private const val PROMPT_VER = 3
 
 /** 模型标识：换模型时修改，缓存自动失效。 */
 private const val MODEL_ID = "minicpm5-2b-q4km"
+/** 逐句解析 prompt：要求按编号逐行输出，不要思考过程。 */
+private fun buildLinesPrompt(title: String, author: String, lines: List<String>): String =
+    buildString {
+        append("《").append(title).append("》").append(author).append('\n')
+        lines.forEachIndexed { index, line ->
+            append(index + 1).append(". ").append(line).append('\n')
+        }
+        append("请逐句解释：每句先给字词注释，再给白话译文，合并为一句，不超过 40 字。")
+        append("按编号逐行输出，不要输出思考过程。")
+    }
+
+/** 把「1. xxx」形式的输出解析成与行数等长的列表。 */
+private fun parseNumbered(text: String, count: Int): List<String> {
+    val out = MutableList(count) { "" }
+    val pattern = Regex("""^(\d+)[.、)]\s*(.+)$""")
+    text.lineSequence().forEach { raw ->
+        val line = raw.trim()
+        val match = pattern.find(line) ?: return@forEach
+        val index = match.groupValues[1].toIntOrNull()?.minus(1) ?: return@forEach
+        if (index in 0 until count) {
+            out[index] = match.groupValues[2].trim()
+        }
+    }
+    return out
+}
