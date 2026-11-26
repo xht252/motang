@@ -47,6 +47,9 @@ object LlmNative {
         sink: TokenSink,
     ): String
 
+    /** 语音转文字：读取 16kHz 单声道 WAV，经 mtmd 音频塔转写。 */
+    external fun transcribe(audioPath: String, mmprojPath: String, asrModelPath: String, nThreads: Int): String
+
     /** 非流式（内部复用 generateStream）。 */
     external fun generate(prompt: String, maxTokens: Int, temperature: Float): String
 }

@@ -5,6 +5,7 @@ object LlmProtocol {
     const val MSG_LOAD = 1
     const val MSG_GENERATE = 2
     const val MSG_RELEASE = 3
+    const val MSG_TRANSCRIBE = 4
     const val MSG_TOKEN = 101
     const val MSG_RESULT = 100
 
@@ -15,4 +16,7 @@ object LlmProtocol {
     const val KEY_PROMPT = "prompt"
     const val KEY_MAX_TOKENS = "max_tokens"
     const val KEY_TEMPERATURE = "temperature"
+    const val KEY_AUDIO_PATH = "audio_path"
+    const val KEY_MMPROJ_PATH = "mmproj_path"
+    const val KEY_ASR_MODEL = "asr_model"
 }

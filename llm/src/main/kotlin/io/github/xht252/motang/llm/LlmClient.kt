@@ -104,6 +104,19 @@ class LlmClient(private val context: Context) {
         }
     }
 
+    /** 语音转文字。 */
+    suspend fun transcribe(
+        audioPath: String,
+        mmprojPath: String,
+        asrModelPath: String,
+        threads: Int = 4,
+    ): String = send(LlmProtocol.MSG_TRANSCRIBE) { data ->
+        data.putString(LlmProtocol.KEY_AUDIO_PATH, audioPath)
+        data.putString(LlmProtocol.KEY_MMPROJ_PATH, mmprojPath)
+        data.putString(LlmProtocol.KEY_ASR_MODEL, asrModelPath)
+        data.putInt(LlmProtocol.KEY_THREADS, threads)
+    }
+
     fun release() {
         runCatching {
             service?.send(Message.obtain(null, LlmProtocol.MSG_RELEASE))

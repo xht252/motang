@@ -20,6 +20,10 @@ endif()
 # llama.cpp 的库目标（llama / ggml / ggml-base / ggml-cpu）
 add_subdirectory("${LLAMA_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/llama.cpp" EXCLUDE_FROM_ALL)
 
+# 语音需要 mtmd（音频塔）。视频分支依赖 ffmpeg，端侧关闭。
+set(MTMD_VIDEO OFF CACHE BOOL "" FORCE)
+add_subdirectory("${LLAMA_DIR}/tools/mtmd" "${CMAKE_CURRENT_BINARY_DIR}/mtmd" EXCLUDE_FROM_ALL)
+
 add_library(motang_llm SHARED
     cpp/llm_bridge.cpp
 )
@@ -27,12 +31,14 @@ add_library(motang_llm SHARED
 target_include_directories(motang_llm PRIVATE
     "${LLAMA_DIR}/include"
     "${LLAMA_DIR}/ggml/include"
+    "${LLAMA_DIR}/tools/mtmd"
 )
 
 find_library(ANDROID_LOG_LIB log)
 
 target_link_libraries(motang_llm
     llama
+    mtmd
     android
     ${ANDROID_LOG_LIB}
 )

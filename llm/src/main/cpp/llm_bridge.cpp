@@ -8,6 +8,10 @@
 #include <vector>
 
 #include "llama.h"
+#include "mtmd.h"
+#include "mtmd-helper.h"
+#include <cstdio>
+#include <vector>
 
 #define LOG_TAG "MotangLlm"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -20,6 +24,8 @@ llama_model* g_model = nullptr;
 llama_context* g_ctx = nullptr;
 const llama_vocab* g_vocab = nullptr;
 std::string g_loaded_path;
+mtmd_context* g_mtmd = nullptr;
+std::string g_mmproj_path;
 int g_n_ctx = 2048;
 
 std::string jstring_to_std(JNIEnv* env, jstring value) {
@@ -280,6 +286,184 @@ Java_io_github_xht252_motang_llm_LlmNative_generate(
     if (sink != nullptr) env->DeleteLocalRef(sink);
     env->DeleteLocalRef(sink_cls);
     return result;
+}
+
+}  // extern "C"
+
+// ---------------------------------------------------------------------------
+// 语音转写（mtmd 音频塔）
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/** 读取 16-bit PCM 单声道 WAV → float [-1,1]。 */
+bool read_wav_f32(const char* path, std::vector<float>& out) {
+    FILE* f = fopen(path, "rb");
+    if (f == nullptr) return false;
+
+    char riff[4], wave[4];
+    uint32_t file_size = 0;
+    if (fread(riff, 1, 4, f) != 4 || fread(&file_size, 4, 1, f) != 1 ||
+        fread(wave, 1, 4, f) != 4 ||
+        memcmp(riff, "RIFF", 4) != 0 || memcmp(wave, "WAVE", 4) != 0) {
+        fclose(f);
+        return false;
+    }
+
+    int channels = 1;
+    int bits = 16;
+
+    while (true) {
+        char id[4];
+        uint32_t sz = 0;
+        if (fread(id, 1, 4, f) != 4) break;
+        if (fread(&sz, 4, 1, f) != 1) break;
+
+        if (memcmp(id, "fmt ", 4) == 0) {
+            unsigned char buf[16] = {0};
+            const size_t rd = fread(buf, 1, 16, f);
+            if (rd >= 16) {
+                channels = buf[2] | (buf[3] << 8);
+                bits = buf[14] | (buf[15] << 8);
+            }
+            if (sz > 16) fseek(f, static_cast<long>(sz - 16), SEEK_CUR);
+        } else if (memcmp(id, "data", 4) == 0) {
+            if (channels != 1 || bits != 16) {
+                fclose(f);
+                return false;
+            }
+            std::vector<int16_t> pcm(sz / 2);
+            const size_t n = fread(pcm.data(), sizeof(int16_t), pcm.size(), f);
+            out.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                out.push_back(static_cast<float>(pcm[i]) / 32768.0f);
+            }
+            fclose(f);
+            return !out.empty();
+        } else {
+            fseek(f, static_cast<long>(sz + (sz & 1)), SEEK_CUR);
+        }
+    }
+
+    fclose(f);
+    return false;
+}
+
+}  // namespace
+
+extern "C" {
+
+/**
+ * 语音转文字。
+ *
+ * 流程：WAV → mtmd_bitmap_init_from_audio → mtmd_tokenize → mtmd_helper_eval_chunks
+ *      → 常规采样循环。
+ *
+ * mmproj 只在路径变化时重建（与主模型同样的复用策略）。
+ */
+JNIEXPORT jstring JNICALL
+Java_io_github_xht252_motang_llm_LlmNative_transcribe(
+    JNIEnv* env, jobject /*thiz*/, jstring audio_path, jstring mmproj_path,
+    jstring asr_model_path, jint n_threads) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    const std::string audio = jstring_to_std(env, audio_path);
+    const std::string mmproj = jstring_to_std(env, mmproj_path);
+    const std::string asr_model = jstring_to_std(env, asr_model_path);
+
+    // ASR 与文本解析是两个模型：路径不同则卸载当前模型再加载 ASR。
+    if (asr_model.empty()) return env->NewStringUTF("");
+    if (g_loaded_path != asr_model || g_ctx == nullptr) {
+        release_locked();
+        llama_model_params mp = llama_model_default_params();
+        mp.n_gpu_layers = 0;
+        mp.load_mode = LLAMA_LOAD_MODE_MMAP;
+        g_model = llama_model_load_from_file(asr_model.c_str(), mp);
+        if (g_model == nullptr) {
+            LOGE("ASR 模型加载失败: %s", asr_model.c_str());
+            return env->NewStringUTF("");
+        }
+        llama_context_params cp = llama_context_default_params();
+        cp.n_ctx = 2048;
+        cp.n_threads = n_threads > 0 ? n_threads : 4;
+        cp.n_threads_batch = cp.n_threads;
+        cp.n_batch = 256;
+        g_ctx = llama_init_from_model(g_model, cp);
+        if (g_ctx == nullptr) { release_locked(); return env->NewStringUTF(""); }
+        g_vocab = llama_model_get_vocab(g_model);
+        g_loaded_path = asr_model;
+        LOGI("ASR model loaded: %s", asr_model.c_str());
+    }
+
+    if (g_mtmd == nullptr || g_mmproj_path != mmproj) {
+        if (g_mtmd != nullptr) {
+            mtmd_free(g_mtmd);
+            g_mtmd = nullptr;
+        }
+        mtmd_context_params params = mtmd_context_params_default();
+        g_mtmd = mtmd_init_from_file(mmproj.c_str(), g_model, params);
+        if (g_mtmd == nullptr) {
+            LOGE("mtmd_init_from_file 失败: %s", mmproj.c_str());
+            return env->NewStringUTF("");
+        }
+        g_mmproj_path = mmproj;
+    }
+
+    std::vector<float> samples;
+    if (!read_wav_f32(audio.c_str(), samples)) {
+        LOGE("WAV 读取失败（需 16kHz 单声道 16bit）: %s", audio.c_str());
+        return env->NewStringUTF("");
+    }
+
+    mtmd_bitmap* bitmap = mtmd_bitmap_init_from_audio(samples.size(), samples.data());
+    if (bitmap == nullptr) return env->NewStringUTF("");
+
+    std::string text = std::string(mtmd_default_marker()) + "\n转写这段音频。";
+    mtmd_input_text itext{text.c_str(), text.size(), true, true};
+
+    mtmd_input_chunks* chunks = mtmd_input_chunks_init();
+    const mtmd_bitmap* bitmaps[1] = {bitmap};
+    int32_t rc = mtmd_tokenize(g_mtmd, chunks, &itext, bitmaps, 1);
+    if (rc != 0) {
+        mtmd_input_chunks_free(chunks);
+        mtmd_bitmap_free(bitmap);
+        LOGE("mtmd_tokenize 失败: %d", rc);
+        return env->NewStringUTF("");
+    }
+
+    llama_memory_clear(llama_get_memory(g_ctx), true);
+    llama_pos n_past = 0;
+    rc = mtmd_helper_eval_chunks(g_mtmd, g_ctx, chunks, 0, 0, 256, true, &n_past);
+    mtmd_input_chunks_free(chunks);
+    mtmd_bitmap_free(bitmap);
+    if (rc != 0) {
+        LOGE("mtmd_helper_eval_chunks 失败: %d", rc);
+        return env->NewStringUTF("");
+    }
+
+    llama_sampler* smpl = make_sampler(0.0f);
+    std::string answer;
+    std::vector<char> piece(64);
+    for (int i = 0; i < 128; ++i) {
+        const llama_token id = llama_sampler_sample(smpl, g_ctx, -1);
+        if (llama_vocab_is_eog(g_vocab, id)) break;
+        llama_sampler_accept(smpl, id);
+
+        int len = llama_token_to_piece(
+            g_vocab, id, piece.data(), static_cast<int32_t>(piece.size()), 0, false);
+        if (len > 0) answer.append(piece.data(), static_cast<size_t>(len));
+
+        llama_batch next = llama_batch_get_one(const_cast<llama_token*>(&id), 1);
+        if (llama_decode(g_ctx, next) != 0) break;
+    }
+    llama_sampler_free(smpl);
+
+    const size_t first = answer.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) answer.clear();
+    else if (first > 0) answer.erase(0, first);
+
+    LOGI("transcribed: %s", answer.c_str());
+    return env->NewStringUTF(answer.c_str());
 }
 
 }  // extern "C"

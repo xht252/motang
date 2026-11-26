@@ -44,6 +44,8 @@ fun SearchPane(
     onSubmit: () -> Unit,
     onOpenPoem: (String) -> Unit,
     modifier: Modifier = Modifier,
+    voiceBusy: Boolean = false,
+    onVoice: () -> Unit = {},
 ) {
     val tokens = LocalInkTokens.current
 
