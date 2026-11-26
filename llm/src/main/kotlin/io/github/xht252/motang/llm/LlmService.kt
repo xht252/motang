@@ -79,25 +79,6 @@ class LlmService : Service() {
                 true
             }
 
-            LlmProtocol.MSG_TRANSCRIBE -> {
-                val audio = msg.data.getString(LlmProtocol.KEY_AUDIO_PATH).orEmpty()
-                val mmproj = msg.data.getString(LlmProtocol.KEY_MMPROJ_PATH).orEmpty()
-                val asrModel = msg.data.getString(LlmProtocol.KEY_ASR_MODEL).orEmpty()
-                val threads = msg.data.getInt(LlmProtocol.KEY_THREADS, 4)
-                val reply = msg.replyTo
-                worker.execute {
-                    val text = runCatching { LlmNative.transcribe(audio, mmproj, asrModel, threads) }
-                        .getOrElse {
-                            Log.e(TAG, "transcribe failed", it)
-                            ""
-                        }
-                    reply?.send(replyMessage(Bundle().apply {
-                        putString(LlmProtocol.KEY_TEXT, text)
-                    }))
-                }
-                true
-            }
-
             else -> false
         }
     })

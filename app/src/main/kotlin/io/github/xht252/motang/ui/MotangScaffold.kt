@@ -85,8 +85,6 @@ fun MotangScaffold(
     aiText: String,
     aiBusy: Boolean,
     onExplain: () -> Unit,
-    voiceBusy: Boolean,
-    onVoice: () -> Unit,
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onOpenPoem: (String) -> Unit,
@@ -137,8 +135,6 @@ fun MotangScaffold(
                         aiText = aiText,
                         aiBusy = aiBusy,
                         onExplain = onExplain,
-                        voiceBusy = voiceBusy,
-                        onVoice = onVoice,
                     )
                     Destination.CheckIn -> io.github.xht252.motang.ui.checkin.CheckInPane(
                         state = daily,
@@ -183,8 +179,6 @@ private fun SearchDestination(
     aiText: String,
     aiBusy: Boolean,
     onExplain: () -> Unit,
-    voiceBusy: Boolean,
-    onVoice: () -> Unit,
 ) {
     val fold = rememberFoldState()
     val detail = state.selected
@@ -198,7 +192,7 @@ private fun SearchDestination(
     if (widthClass == WidthClass.Compact) {
         // 单栏：列表 ↔ 详情整页切换
         if (detail == null) {
-            SearchPane(state, onQueryChange, onSubmit, onOpenPoem, voiceBusy = voiceBusy, onVoice = onVoice)
+            SearchPane(state, onQueryChange, onSubmit, onOpenPoem)
         } else {
             PoemDetailPane(
                 detail = detail,
@@ -227,8 +221,6 @@ private fun SearchDestination(
             modifier = Modifier
                 .widthIn(min = 320.dp, max = 380.dp)
                 .fillMaxHeight(),
-            voiceBusy = voiceBusy,
-            onVoice = onVoice,
         )
         VerticalDivider(color = LocalInkTokens.current.hairline)
         Box(

@@ -99,39 +99,6 @@ fun MotangApp(initialQuery: String? = null) {
     val explanations = remember(application) {
         io.github.xht252.motang.data.ExplanationRepository(context)
     }
-    val asrModelPath = remember(context) {
-        java.io.File(context.getExternalFilesDir("models"), "Qwen3-ASR-0.6B-Q8_0.gguf").absolutePath
-    }
-    val mmprojPath = remember(context) {
-        java.io.File(context.getExternalFilesDir("models"), "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf").absolutePath
-    }
-    var voiceBusy by remember { mutableStateOf(false) }
-
-    fun startVoice() {
-        scope.launch {
-            voiceBusy = true
-            try {
-                val wav = io.github.xht252.motang.ui.voice.VoiceRecorder.recordToWav(
-                    context,
-                    java.io.File(context.cacheDir, "voice-input.wav"),
-                    5000,
-                )
-                if (wav != null) {
-                    val text = llmClient.transcribe(wav.absolutePath, mmprojPath, asrModelPath, 4)
-                    if (text.isNotBlank()) {
-                        viewModel.onQueryChange(text.trim())
-                        viewModel.submitSearch()
-                    }
-                }
-            } finally {
-                voiceBusy = false
-            }
-        }
-    }
-
-    val voiceLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) startVoice() }
     val modelPath = remember(context) {
         java.io.File(context.getExternalFilesDir("models"), "MiniCPM5-2B-Q4_K_M.gguf").absolutePath
     }
@@ -270,18 +237,6 @@ fun MotangApp(initialQuery: String? = null) {
             onFinishSession = finishSession,
             aiText = aiText,
             aiBusy = aiBusy,
-            voiceBusy = voiceBusy,
-            onVoice = {
-                val granted = androidx.core.content.ContextCompat.checkSelfPermission(
-                    context,
-                    android.Manifest.permission.RECORD_AUDIO,
-                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                if (granted) {
-                    startVoice()
-                } else {
-                    voiceLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                }
-            },
 
             onExplain = {
                 val sel = state.selected
@@ -409,8 +364,6 @@ private fun MotangAppPreview() {
             onFinishSession = {},
             aiText = "",
             aiBusy = false,
-            voiceBusy = false,
-            onVoice = {},
             onExplain = {},
             onQueryChange = {},
             onSubmit = {},
