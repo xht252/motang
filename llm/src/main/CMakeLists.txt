@@ -17,6 +17,11 @@ if(NOT EXISTS "${LLAMA_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "找不到 llama.cpp：${LLAMA_DIR}。请执行 git submodule update --init --recursive")
 endif()
 
+# KleidiAI 只支持 AArch64；x86_64（模拟器）必须关闭，否则 CMake 直接 FATAL_ERROR。
+if (DEFINED CMAKE_ANDROID_ARCH_ABI AND NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+    set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
+endif()
+
 # llama.cpp 的库目标（llama / ggml / ggml-base / ggml-cpu）
 add_subdirectory("${LLAMA_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/llama.cpp" EXCLUDE_FROM_ALL)
 

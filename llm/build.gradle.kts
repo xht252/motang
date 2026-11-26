@@ -10,6 +10,15 @@ plugins {
 // 该模块的 Service 运行在 android:process=":llm"，避免推理 OOM 拖垮 UI 进程。
 //
 // 模型不入库（见 .gitignore 的 model/）；构建期只编译 llama.cpp 源码。
+// 本地 KleidiAI 源码：优先 Gradle 属性，其次环境变量；缺失则不启用（不影响功能）。
+val kleidiaiSrc: String? =
+    (project.findProperty("motang.kleidiaiSrc") as String?) ?: System.getenv("KLEIDIAI_SRC")
+val kleidiaiArgs: List<String> = if (kleidiaiSrc != null) {
+    listOf("-DGGML_CPU_KLEIDIAI=ON", "-DFETCHCONTENT_SOURCE_DIR_KLEIDIAI=$kleidiaiSrc")
+} else {
+    emptyList()
+}
+
 android {
     namespace = "io.github.xht252.motang.llm"
     compileSdk = 35
@@ -35,6 +44,8 @@ android {
                     "-DGGML_OPENMP=OFF",
                     // 关掉 ccache 探测噪音
                     "-DGGML_CCACHE=OFF",
+                    // KleidiAI 默认在配置期联网下载；用本地源码覆盖，离线可构建。
+                    *kleidiaiArgs.toTypedArray(),
                                                             // 16KB page size 对齐（NDK r27+ 默认已为 16KB，这里显式声明）
                     "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                 )
