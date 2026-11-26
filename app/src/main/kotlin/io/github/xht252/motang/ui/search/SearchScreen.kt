@@ -68,7 +68,14 @@ fun SearchPane(
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium,
             )
-            is IndexState.Ready -> SearchBody(state, onQueryChange, onSubmit, onOpenPoem)
+            is IndexState.Ready -> SearchBody(
+                state = state,
+                onQueryChange = onQueryChange,
+                onSubmit = onSubmit,
+                onOpenPoem = onOpenPoem,
+                voiceBusy = voiceBusy,
+                onVoice = onVoice,
+            )
         }
     }
 }
@@ -95,6 +102,8 @@ private fun SearchBody(
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onOpenPoem: (String) -> Unit,
+    voiceBusy: Boolean,
+    onVoice: () -> Unit,
 ) {
     val tokens = LocalInkTokens.current
     val fontScale = LocalFontScale.current
@@ -107,8 +116,20 @@ private fun SearchBody(
         label = { Text("搜标题 / 作者 / 诗句 / 拼音") },
     )
 
-    Button(onClick = onSubmit, enabled = !state.loading) {
-        Text(if (state.loading) "检索中…" else "检索")
+    androidx.compose.foundation.layout.Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Button(onClick = onSubmit, enabled = !state.loading) {
+            Text(if (state.loading) "检索中…" else "检索")
+        }
+        // 语音输入：录音 5s → 端侧 ASR 转写 → 自动填入并检索。
+        androidx.compose.material3.OutlinedButton(
+            onClick = onVoice,
+            enabled = !voiceBusy && !state.loading,
+        ) {
+            Text(if (voiceBusy) "识别中…" else "语音")
+        }
     }
 
     state.error?.let { Text(text = it, color = MaterialTheme.colorScheme.error) }

@@ -271,7 +271,17 @@ fun MotangApp(initialQuery: String? = null) {
             aiText = aiText,
             aiBusy = aiBusy,
             voiceBusy = voiceBusy,
-            onVoice = {},
+            onVoice = {
+                val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.RECORD_AUDIO,
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                if (granted) {
+                    startVoice()
+                } else {
+                    voiceLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                }
+            },
 
             onExplain = {
                 val sel = state.selected

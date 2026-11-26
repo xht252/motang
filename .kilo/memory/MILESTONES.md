@@ -373,3 +373,16 @@ fn list_authors(meta_dir: String, prefix: String, limit: u32) -> Result<Vec<Stri
 **未完成**
 - 语音输入 UI（mtmd 已验证可用）
 - 热约束 / `:llm` 崩溃重试
+### M5 语音输入（2026-11-26 完成）
+
+**已接线**
+- 检索栏「语音」按钮 → 权限检查（RECORD_AUDIO）→ 录音 5 s → 转写 → 自动填入并检索。
+- 录音：`AudioRecord` 16 kHz/单声道/16bit + 手写 WAV 头。
+- 转写：`MSG_TRANSCRIBE` → `mtmd` 音频塔；ASR 模型独立于文本模型，路径不同自动切换。
+
+**设备实测**
+- `ASR model loaded: .../Qwen3-ASR-0.6B-Q8_0.gguf`
+- `transcribed:`（模拟器无麦克风输入，故为空；链路与模型加载均正常）
+
+**限制**
+- 模拟器以 `-no-audio` 运行，无法验证真实识别质量；需真机或开启主机麦克风。
