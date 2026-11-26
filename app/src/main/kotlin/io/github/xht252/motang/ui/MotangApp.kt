@@ -105,12 +105,12 @@ fun MotangApp(initialQuery: String? = null) {
             val key = "daily|$title|$author"
             val cached = explanations.get(key, PROMPT_VER, MODEL_ID)
             if (cached != null) {
-                parseNumbered(cached, poemLines.size)
+                parseLineBlocks(cached, poemLines.size)
             } else {
                 llmClient.loadModel(modelPath, 4, 2048)
-                val text = llmClient.generate(buildLinesPrompt(title, author, poemLines), 512, 0.3f)
+                val text = llmClient.generate(buildLinePrompt(title, author, poemLines), 640, 0.3f)
                 if (text.isNotBlank()) explanations.put(key, PROMPT_VER, MODEL_ID, text)
-                parseNumbered(text, poemLines.size)
+                parseLineBlocks(text, poemLines.size)
             }
         },
     )
@@ -271,8 +271,8 @@ fun MotangApp(initialQuery: String? = null) {
                         } else {
                             val generated = runCatching {
                                 llmClient.generateStream(
-                                    prompt = buildPoemPrompt(sel.title, sel.author, sel.paragraphs),
-                                    maxTokens = 512,
+                                    prompt = buildMacroPrompt(sel.title, sel.author, sel.paragraphs),
+                                    maxTokens = 640,
                                     temperature = 0.3f,
                                 ) { delta ->
                                     // 流式追加：首个 token 即可见，避免 25s 空白。
@@ -385,43 +385,98 @@ private fun MotangAppPreview() {
     }
 }
 /** 构造逐句解析 prompt（v1）。 */
-private fun buildPoemPrompt(title: String, author: String, lines: List<String>): String =
-    buildString {
-        append("你是古典文学助教。仅依据下列诗文作答，不要编造典故出处，不确定处写「存疑」。")
-        append('\n')
-        append("《").append(title).append("》").append(author).append('\n')
-        lines.forEachIndexed { index, line ->
-            append(index + 1).append(". ").append(line).append('\n')
-        }
-        append("请逐句给出字词注释与白话译文，每句一行，简洁。")
-    }
-/** prompt 版本：改 Prompt 结构时自增，缓存自动失效。 */
-private const val PROMPT_VER = 3
+// ---------------------------------------------------------------------------
+// Prompt（v4）
+// ---------------------------------------------------------------------------
+// 设计要点：
+// - 「整篇」与「逐句」是两个独立任务，混在一起小模型会漏句、宏观微观互相挤占。
+// - 不要求翻译：解析的是诗句的表达与结构，不是白话对译。
+// - 抑制编造：明确要求「待考/不确定」，并以原文为证据。
 
-/** 模型标识：换模型时修改，缓存自动失效。 */
-private const val MODEL_ID = "minicpm5-2b-q4km"
-/** 逐句解析 prompt：要求按编号逐行输出，不要思考过程。 */
-private fun buildLinesPrompt(title: String, author: String, lines: List<String>): String =
+/** 整篇宏观分析（详情页）。 */
+private fun buildMacroPrompt(title: String, author: String, lines: List<String>): String =
     buildString {
-        append("《").append(title).append("》").append(author).append('\n')
-        lines.forEachIndexed { index, line ->
-            append(index + 1).append(". ").append(line).append('\n')
-        }
-        append("请逐句解释：每句先给字词注释，再给白话译文，合并为一句，不超过 40 字。")
-        append("按编号逐行输出，不要输出思考过程。")
+        append("请对下面这首诗做整篇详细分析。不要逐句翻译。\n")
+        append("诗题：").append(title).append('\n')
+        append("作者：").append(author).append('\n')
+        append("诗歌全文：\n").append(lines.joinToString("\n")).append('\n')
+        append(
+            """
+            严格按以下结构输出，不要增删章节：
+            1. 基本信息与体裁判断（句数、字数、押韵、对仗等形式证据；不足则写不确定）
+            2. 全篇结构层次（按起承转合或联划分；每层写包含句子、层意、作用）
+            3. 意象与意境（3~6 个核心意象，各引用原文，并说明共同营造的意境）
+            4. 情感脉络（起点→转折→落点，说明文本如何推出情感）
+            5. 艺术手法（至少 3 条，每条：手法名称／原文例证／表达效果）
+            6. 语言风格（3~5 个关键词，各附一句原文证据）
+            7. 主旨与深层意蕴（先一句主旨，再展开 3~5 句）
+            8. 待考与不确定点（没有则写「无明显待考点」）
+            9. 一句话总评（不超过 40 字）
+
+            要求：仅依据给定原文与可靠文学常识；不得编造作者生平、创作年代、典故出处；
+            每条观点尽量引用原文词句作证据；不确定处标注「待考」。
+            """.trimIndent(),
+        )
     }
 
-/** 把「1. xxx」形式的输出解析成与行数等长的列表。 */
-private fun parseNumbered(text: String, count: Int): List<String> {
+/** 逐句微观分析（每日打卡）。 */
+private fun buildLinePrompt(title: String, author: String, lines: List<String>): String =
+    buildString {
+        append("请对下面这首诗做逐句详细分析，严格按原诗顺序逐句分析。\n")
+        append("诗题：").append(title).append('\n')
+        append("作者：").append(author).append('\n')
+        append("诗歌全文：\n").append(lines.joinToString("\n")).append('\n')
+        append(
+            """
+            对每一句按固定格式输出，一句一段，不要合并、不要跳过：
+            【S序号】原句：……
+    - 关键词：解释 1~3 个难字、虚词或特殊用法
+    - 意象/画面：这一句写了什么景象或事物
+    - 手法：若有修辞则写「手法—原文词—效果」；没有写「无明显手法」
+    - 句意与作用：本句表达什么，在本句层面起什么作用
+    - 情感/结构功能：起景、铺垫、转折、递进、收束等
+    - 与上下句关系：承接什么、引出什么；首句尾句说明特殊位置
+    - 典故/歧义：有则简释；不确定写「待考」；没有写「无」
+
+            要求：每句 80~150 字；不写白话对译；不重复整篇主旨；
+            不得编造典故与创作背景；不确定处标注「待考」。
+            """.trimIndent(),
+        )
+    }
+
+/**
+ * 解析「【S1】… 【S2】…」形式的逐句输出。
+ *
+ * 每块的正文（去掉标题行）合并为该句的解析文本。
+ */
+private fun parseLineBlocks(text: String, count: Int): List<String> {
     val out = MutableList(count) { "" }
-    val pattern = Regex("""^(\d+)[.、)]\s*(.+)$""")
-    text.lineSequence().forEach { raw ->
-        val line = raw.trim()
-        val match = pattern.find(line) ?: return@forEach
-        val index = match.groupValues[1].toIntOrNull()?.minus(1) ?: return@forEach
-        if (index in 0 until count) {
-            out[index] = match.groupValues[2].trim()
-        }
+    if (text.isBlank()) return out
+
+    val marker = Regex("""【S(\d+)】""")
+    val matches = marker.findAll(text).toList()
+    if (matches.isEmpty()) {
+        // 退化：按行均分，保证不漏展示
+        val parts = text.lines().filter { it.isNotBlank() }
+        for (i in 0 until count) if (i < parts.size) out[i] = parts[i].trim()
+        return out
+    }
+
+    matches.forEachIndexed { i, m ->
+        val index = m.groupValues[1].toIntOrNull()?.minus(1) ?: return@forEachIndexed
+        val start = m.range.last + 1
+        val end = if (i + 1 < matches.size) matches[i + 1].range.first else text.length
+        val block = text.substring(start, end)
+            .lines()
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { it.trim() }
+            .trim()
+        if (index in 0 until count) out[index] = block
     }
     return out
 }
+/** prompt 版本：改 Prompt 结构时自增，缓存自动失效。 */
+private const val PROMPT_VER = 4
+
+/** 模型标识：换模型时修改，缓存自动失效。 */
+private const val MODEL_ID = "minicpm5-2b-q4km"
