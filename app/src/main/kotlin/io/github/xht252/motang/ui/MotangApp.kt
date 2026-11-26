@@ -96,6 +96,9 @@ fun MotangApp(initialQuery: String? = null) {
     }
     var aiText by remember { mutableStateOf("") }
     var aiBusy by remember { mutableStateOf(false) }
+    val explanations = remember(application) {
+        io.github.xht252.motang.data.ExplanationRepository(context)
+    }
     val modelPath = remember(context) {
         java.io.File(context.getExternalFilesDir("models"), "MiniCPM5-2B-Q4_K_M.gguf").absolutePath
     }
@@ -240,13 +243,20 @@ fun MotangApp(initialQuery: String? = null) {
                     scope.launch {
                         aiBusy = true
                         aiText = ""
+                        // 1) 先查缓存：命中即 0 等待返回。
+                        val cached = explanations.get(sel.poemId, PROMPT_VER, MODEL_ID)
+                        if (cached != null) {
+                            aiText = cached
+                            aiBusy = false
+                            return@launch
+                        }
                         val error = runCatching {
                             llmClient.loadModel(modelPath, 4, 2048)
                         }.getOrElse { it.message ?: "加载失败" }
                         aiText = if (error.isNotEmpty()) {
                             "模型加载失败：$error"
                         } else {
-                            runCatching {
+                            val generated = runCatching {
                                 llmClient.generateStream(
                                     prompt = buildPoemPrompt(sel.title, sel.author, sel.paragraphs),
                                     maxTokens = 192,
@@ -256,6 +266,11 @@ fun MotangApp(initialQuery: String? = null) {
                                     aiText += delta
                                 }
                             }.getOrElse { "生成失败：${it.message}" }
+                            // 2) 成功后写缓存，二次进入零等待。
+                            if (generated.isNotBlank() && !generated.startsWith("生成失败")) {
+                                explanations.put(sel.poemId, PROMPT_VER, MODEL_ID, generated)
+                            }
+                            generated
                         }
                         aiBusy = false
                     }
@@ -367,3 +382,8 @@ private fun buildPoemPrompt(title: String, author: String, lines: List<String>):
         }
         append("请逐句给出字词注释与白话译文，每句一行，简洁。")
     }
+/** prompt 版本：改 Prompt 结构时自增，缓存自动失效。 */
+private const val PROMPT_VER = 1
+
+/** 模型标识：换模型时修改，缓存自动失效。 */
+private const val MODEL_ID = "minicpm5-2b-q4km"

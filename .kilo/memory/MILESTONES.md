@@ -359,3 +359,17 @@ fn list_authors(meta_dir: String, prefix: String, limit: u32) -> Result<Vec<Stri
 - Room 解释缓存（`sha256(poem_id+prompt_ver+model_id)`）
 - 语音输入 UI（mtmd 已可用）
 - 热约束 / `:llm` 崩溃重试
+### M5 第 5 步（解释缓存，2026-11-26）
+
+**实现**
+- Room 表 `explanation(cacheKey PK, poemId, modelId, promptVer, content, createdAt)`，DB v3。
+- 键：`sha256(poem_id | prompt_ver | model_id)`，换 Prompt 或换模型自动失效。
+- `ExplanationRepository.get/put`；MotangApp 首次生成后写缓存，再次进入先查缓存。
+
+**实测（模拟器）**
+- 首次：模型加载 + 生成，日志 `generated 1` 次、约 30 s。
+- 再次进入同一首诗：点击后 **6 秒内 0 次生成**（日志无新增），说明命中缓存直接返回。
+
+**未完成**
+- 语音输入 UI（mtmd 已验证可用）
+- 热约束 / `:llm` 崩溃重试
