@@ -46,9 +46,15 @@ class LlmService : Service() {
 
             LlmProtocol.MSG_GENERATE -> {
                 val prompt = msg.data.getString(LlmProtocol.KEY_PROMPT).orEmpty()
-                val maxTokens = msg.data.getInt(LlmProtocol.KEY_MAX_TOKENS, 256)
+                var maxTokens = msg.data.getInt(LlmProtocol.KEY_MAX_TOKENS, 256)
                 val temperature = msg.data.getFloat(LlmProtocol.KEY_TEMPERATURE, 0.3f)
                 val reply = msg.replyTo
+                // 热约束：接近节流阈值时缩短生成长度，避免持续高温降频。
+                val headroom = thermalHeadroom() 
+                if (headroom != null && headroom >= 0.8f) {
+                    Log.w(TAG, "thermal headroom=$headroom，缩短生成长度") 
+                    maxTokens = (maxTokens / 2).coerceAtLeast(64)
+                }
                 worker.execute {
                     val started = System.currentTimeMillis()
                     val text = runCatching {
@@ -91,6 +97,19 @@ class LlmService : Service() {
         }
     private fun replyMessage(data: Bundle): Message =
         Message.obtain(null, LlmProtocol.MSG_RESULT).apply { this.data = data }
+
+    /**
+     * 热余量（0..1，越大越接近节流）。
+     *
+     * API 30+ 才有 getThermalHeadroom；低版本返回 null 表示不参与约束。
+     */
+    private fun thermalHeadroom(): Float? {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return null
+        return runCatching {
+            val pm = getSystemService(android.os.PowerManager::class.java)
+            pm?.getThermalHeadroom(10)
+        }.getOrNull()
+    }
 
     private companion object {
         const val TAG = "MotangLlmService"

@@ -110,22 +110,36 @@ class LlmClient(private val context: Context) {
         }
     }
 
-    private suspend fun send(what: Int, fill: (Bundle) -> Unit): String =
+    /**
+     * 发送一次请求；失败（如 :llm 进程被杀）时重绑并重试一次。
+     */
+    private suspend fun send(what: Int, fill: (Bundle) -> Unit): String {
+        sendOnce(what, fill)?.let { return it }
+        // 首次失败：清掉旧连接，重新绑定后重试。
+        runCatching { context.unbindService(connection) }
+        service = null
+        bound = false
+        bind()
+        kotlinx.coroutines.delay(800)
+        return sendOnce(what, fill) ?: ""
+    }
+
+    /** 单次发送；失败返回 null（由调用方决定是否重试）。 */
+    private suspend fun sendOnce(what: Int, fill: (Bundle) -> Unit): String? =
         suspendCancellableCoroutine { cont ->
             val target = service
             if (target == null) {
-                cont.resume("")
+                cont.resume(null)
                 return@suspendCancellableCoroutine
             }
             pending = cont
-            val data = Bundle().apply(fill)
             val msg = Message.obtain(null, what).apply {
-                this.data = data
+                data = Bundle().apply(fill)
                 replyTo = replyMessenger
             }
             runCatching { target.send(msg) }.onFailure {
                 pending = null
-                cont.resume("")
+                cont.resume(null)
             }
         }
 }
